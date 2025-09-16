@@ -31,5 +31,4 @@ jobs:
         uses: astral-sh/setup-uv@v6
 
       - name: Run tests
-        working-directory: python/test-scamplepy
         run: uv run --module pytest
