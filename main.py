@@ -80,10 +80,6 @@ class Config(BaseSettings):
         )
 
 
-def file_matches_cache(cache_dir: Path, filename: FILENAMES, raw_contents: str) -> bool:
-    return raw_contents == (cache_dir / filename).read_bytes()
-
-
 def read_csv(
     csv_dir: Path,
     filename: FILENAMES,
@@ -100,7 +96,22 @@ def read_csv(
 
 async def main() -> None:
     config = Config()
-    config.csv_dir
+    csvs = {
+        filename: read_csv(config.csv_dir, filename, config.csv_renaming)
+        for filename in [
+            "institutions",
+            "people",
+            "labs",
+            "specimens",
+            "suspensions",
+            "suspension-pools",
+            "gems",
+            "gems-suspensions",
+            "cdna",
+            "libraries",
+            "sequencing-submissions",
+        ]
+    }
 
 
 if __name__ == "__main__":
