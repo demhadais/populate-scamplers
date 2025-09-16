@@ -2,6 +2,8 @@ import csv
 from pathlib import Path
 from typing import Any, Iterable, Protocol, Self, Type, TypeVar
 
+from pydantic.main import BaseModel
+
 
 def _rename_csv_fields(
     csv: Iterable[dict[str, Any]], field_renaming: dict[str, str]
@@ -16,22 +18,21 @@ def _rename_csv_fields(
     ]
 
 
-def read_csv(
-    csv_dir: Path,
-    model_name: str,
-    file_renaming: dict[str, str] | None,
-    field_renaming: dict[str, str] | None,
-) -> list[dict[str, Any]]:
-    filename = f"{model_name}.csv"
+class CsvSpec(BaseModel):
+    path: Path | None = None
+    onedrive_file_id: str | None = None
+    field_renaming: dict[str, str] | None = None
 
-    if file_renaming is not None and (renamed := file_renaming.get(model_name)):
-        filename = renamed
 
-    csv_path = csv_dir / filename
+def read_csv(spec: CsvSpec) -> list[dict[str, Any]]:
+    csv_path = spec.path
+    if csv_path is None:
+        raise NotImplementedError("fetching data from OneDrive is not yet supported")
 
     with csv_path.open() as f:
         data = csv.DictReader(f)
 
+        field_renaming = spec.field_renaming
         if field_renaming is None:
             return list(data)
 

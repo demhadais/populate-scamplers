@@ -5,7 +5,7 @@ from scamplepy import ScamplersClient
 from scamplepy.create import NewInstitution
 from pathlib import Path
 
-from utils import read_csv, read_from_cache, write_to_cache
+from read_write import read_from_cache, write_to_cache
 
 
 def _parse_institutions(
@@ -22,19 +22,8 @@ def _parse_institutions(
 
 
 async def create_institutions(
-    client: ScamplersClient,
-    csv_dir: Path,
-    file_renaming: dict[str, str] | None,
-    csv_field_renaming: dict[str, str] | None,
-    cache_dir: Path,
+    client: ScamplersClient, data: list[dict[str, Any]], cache_dir: Path
 ) -> list[tuple[NewInstitution, Any]]:
-    data = read_csv(
-        csv_dir,
-        "institutions",
-        file_renaming=file_renaming,
-        field_renaming=csv_field_renaming,
-    )
-
     already_inserted_institutions = read_from_cache(
         cache_dir, "institutions", NewInstitution
     )
