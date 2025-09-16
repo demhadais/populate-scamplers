@@ -100,6 +100,7 @@ def read_csv(
 
 async def main() -> None:
     config = Config()
+    config.csv_dir
 
 
 if __name__ == "__main__":
