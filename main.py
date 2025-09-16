@@ -74,7 +74,8 @@ class Config(BaseSettings):
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         return (
             TomlConfigSettingsSource(
-                settings_cls, toml_file=cls.model_fields["config_path"].default,
+                settings_cls,
+                toml_file=cls.model_fields["config_path"].default,
             ),
         )
 
@@ -85,19 +86,7 @@ def file_matches_cache(cache_dir: Path, filename: FILENAMES, raw_contents: str) 
 
 def read_csv(
     csv_dir: Path,
-    filename: Literal[
-        "institutions",
-        "people",
-        "labs",
-        "specimens",
-        "suspensions",
-        "suspension-pools",
-        "gems",
-        "gems-suspensions",
-        "cdna",
-        "libraries",
-        "sequencing-submissions",
-    ],
+    filename: FILENAMES,
     csv_renaming: Mapping[str, str],
 ) -> list[dict[str, str]]:
     csv_path = csv_dir / filename
