@@ -9,6 +9,7 @@ from pydantic_settings import (
     TomlConfigSettingsSource,
 )
 from scamplepy import ScamplersClient
+from scamplepy.query import InstitutionQuery
 
 from models.institutions import create_institutions, write_institutions_to_cache
 from read_write import CsvSpec, read_csv
@@ -18,7 +19,8 @@ POPULATE_SCAMPLERS = "populate-scamplers"
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_prefix=POPULATE_SCAMPLERS.upper(), cli_kebab_case=True
+        env_prefix=POPULATE_SCAMPLERS.upper(),
+        cli_kebab_case=True,
     )
 
     config_path: Path = Path.home() / ".config" / POPULATE_SCAMPLERS / "settings.toml"
@@ -70,12 +72,16 @@ class Settings(BaseSettings):
         if self.institutions is not None:
             data = read_csv(self.institutions)
             created_institutions = await create_institutions(
-                client=client, data=data, cache_dir=self.cache_dir
+                client=client,
+                data=data,
+                cache_dir=self.cache_dir,
             )
             write_institutions_to_cache(
                 cache_dir=self.cache_dir,
                 institution_creation_results=created_institutions,
             )
+
+        _institutions = await client.list_institutions(InstitutionQuery())
 
 
 async def update_scamplers_api():

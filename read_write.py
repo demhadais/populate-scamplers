@@ -1,12 +1,14 @@
 import csv
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable, Protocol, Self, Type, TypeVar
+from typing import Any, Protocol, Self, TypeVar
 
 from pydantic.main import BaseModel
 
 
 def _rename_csv_fields(
-    csv: Iterable[dict[str, Any]], field_renaming: dict[str, str]
+    csv: Iterable[dict[str, Any]],
+    field_renaming: dict[str, str],
 ) -> list[dict[str, Any]]:
     return [
         {
@@ -49,7 +51,7 @@ class _ScamplersModel(Protocol):
 T = TypeVar("T", bound=_ScamplersModel)
 
 
-def read_from_cache(cache_dir: Path, subdir_name: str, model: Type[T]) -> list[T]:
+def read_from_cache(cache_dir: Path, subdir_name: str, model: type[T]) -> list[T]:
     return [
         model.from_json_string(p.read_text())
         for p in (cache_dir / subdir_name).iterdir()

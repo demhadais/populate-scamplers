@@ -1,4 +1,5 @@
 import asyncio
+
 from app import update_scamplers_api
 
 
