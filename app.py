@@ -81,7 +81,13 @@ class Settings(BaseSettings):
                 institution_creation_results=created_institutions,
             )
 
-        _institutions = await client.list_institutions(InstitutionQuery())
+        institutions = await client.list_institutions(InstitutionQuery())
+        name_institution_map = {
+            institution.name: institution for institution in institutions
+        }
+        assert len(institutions) == len(name_institution_map), (
+            "institutions do not have unique names"
+        )
 
 
 async def update_scamplers_api():
