@@ -12,3 +12,8 @@ dependencies = [
 
 [tool.uv.sources]
 scamplepy = { git = "https://github.com/demhadais/scamplers", subdirectory = "rust/scamplepy" }
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.3.0",
+]
