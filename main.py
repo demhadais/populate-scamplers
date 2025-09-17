@@ -1,10 +1,10 @@
 import asyncio
-
-from app import update_scamplers_api
+from pydantic_settings import CliApp
+from app import Settings
 
 
 async def main() -> None:
-    await update_scamplers_api()
+    CliApp.run(Settings)
 
 
 if __name__ == "__main__":

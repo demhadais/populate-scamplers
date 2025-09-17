@@ -11,7 +11,7 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-scamplepy = { git = "https://github.com/demhadais/scamplers", subdirectory = "rust/scamplepy" }
+scamplepy = { git = "https://github.com/demhadais/scamplers", subdirectory = "rust/scamplepy", branch = "fix/base64-encoding" }
 
 [dependency-groups]
 dev = [

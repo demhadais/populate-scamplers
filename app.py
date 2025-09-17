@@ -1,20 +1,90 @@
+import asyncio
+from collections.abc import Callable, Coroutine, Iterable
+import logging
 from pathlib import Path
+from typing import Any, TypeVar
 
 from pydantic_settings import (
     BaseSettings,
-    CliApp,
     CliPositionalArg,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
     TomlConfigSettingsSource,
 )
 from scamplepy import ScamplersClient
-from scamplepy.query import InstitutionQuery
 
-from models.institutions import create_institutions, write_institutions_to_cache
+from models.institutions import (
+    csv_to_institution_creations,
+    write_institutions_to_cache,
+)
+from models.labs import csv_to_lab_creations
+from models.people import csv_to_person_creations, write_people_to_cache
 from read_write import CsvSpec, read_csv
 
 POPULATE_SCAMPLERS = "populate-scamplers"
+
+_Req = TypeVar("_Req")
+_Ret = TypeVar("_Ret")
+
+
+async def _catch_exception(coro: Coroutine[_Ret, Any, _Ret]) -> _Ret | None:
+    try:
+        return await coro
+    except Exception as e:
+        logging.error(e)
+
+
+async def _send_requests(
+    func: Callable[[_Req], Coroutine[_Ret, Any, _Ret]], data: Iterable[_Req]
+) -> list[tuple[_Req, _Ret]]:
+    responses = []
+    async with asyncio.TaskGroup() as tg:
+        for d in data:
+            responses.append((d, tg.create_task(_catch_exception(func(d)))))
+
+    return [(d, r.result()) for d, r in responses]
+
+
+async def _update_scamples_api(settings: "Settings"):
+    client = ScamplersClient(
+        api_base_url=settings.api_base_url,
+        api_key=settings.api_key,
+        accept_invalid_certificates=settings.accept_invalid_certificates,
+    )
+
+    cache_dir = settings.cache_dir
+
+    if settings.institutions is not None:
+        data = read_csv(settings.institutions)
+        new_institutions = await csv_to_institution_creations(
+            data=data,
+            cache_dir=cache_dir,
+        )
+        created_institutions = await _send_requests(
+            client.create_institution, new_institutions
+        )
+
+        write_institutions_to_cache(
+            cache_dir=settings.cache_dir,
+            request_response_pairs=created_institutions,
+        )
+
+    if settings.people is not None:
+        data = read_csv(settings.people)
+        new_people = await csv_to_person_creations(
+            client=client,
+            data=data,
+            cache_dir=settings.cache_dir,
+        )
+        created_people = await _send_requests(client.create_person, new_people)
+        write_people_to_cache(
+            cache_dir=cache_dir, request_response_pairs=created_people
+        )
+
+    if settings.labs is not None:
+        data = read_csv(settings.labs)
+        new_labs = await csv_to_lab_creations(client, data, cache_dir)
+        await _send_requests(client.create_lab, new_labs)
 
 
 class Settings(BaseSettings):
@@ -63,32 +133,4 @@ class Settings(BaseSettings):
         )
 
     async def cli_cmd(self):
-        client = ScamplersClient(
-            api_base_url=self.api_base_url,
-            api_key=self.api_key,
-            accept_invalid_certificates=self.accept_invalid_certificates,
-        )
-
-        if self.institutions is not None:
-            data = read_csv(self.institutions)
-            created_institutions = await create_institutions(
-                client=client,
-                data=data,
-                cache_dir=self.cache_dir,
-            )
-            write_institutions_to_cache(
-                cache_dir=self.cache_dir,
-                institution_creation_results=created_institutions,
-            )
-
-        institutions = await client.list_institutions(InstitutionQuery())
-        name_institution_map = {
-            institution.name: institution for institution in institutions
-        }
-        assert len(institutions) == len(name_institution_map), (
-            "institutions do not have unique names"
-        )
-
-
-async def update_scamplers_api():
-    CliApp.run(Settings)
+        await _update_scamples_api(self)

@@ -1,7 +1,9 @@
+import asyncio
 import csv
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Protocol, Self, TypeVar
+import logging
 
 from pydantic.main import BaseModel
 
@@ -12,9 +14,8 @@ def _rename_csv_fields(
 ) -> list[dict[str, Any]]:
     return [
         {
-            field_renaming[field]: value
+            field_renaming.get(field, field.lower()): value
             for field, value in row.items()
-            if field in field_renaming
         }
         for row in csv
     ]
@@ -23,7 +24,7 @@ def _rename_csv_fields(
 class CsvSpec(BaseModel):
     path: Path | None = None
     onedrive_file_id: str | None = None
-    field_renaming: dict[str, str] | None = None
+    field_renaming: dict[str, str] = {}
 
 
 def read_csv(spec: CsvSpec) -> list[dict[str, Any]]:
@@ -31,14 +32,10 @@ def read_csv(spec: CsvSpec) -> list[dict[str, Any]]:
     if csv_path is None:
         raise NotImplementedError("fetching data from OneDrive is not yet supported")
 
-    with csv_path.open() as f:
+    with csv_path.open(encoding="UTF-8-SIG") as f:
         data = csv.DictReader(f)
 
-        field_renaming = spec.field_renaming
-        if field_renaming is None:
-            return list(data)
-
-        return _rename_csv_fields(data, field_renaming)
+        return _rename_csv_fields(data, spec.field_renaming)
 
 
 class _ScamplersModel(Protocol):
@@ -52,20 +49,40 @@ T = TypeVar("T", bound=_ScamplersModel)
 
 
 def read_from_cache(cache_dir: Path, subdir_name: str, model: type[T]) -> list[T]:
-    return [
-        model.from_json_string(p.read_text())
-        for p in (cache_dir / subdir_name).iterdir()
-    ]
-
-
-def write_to_cache(cache_dir: Path, subdir_name: str, data: list[tuple[str, T]]):
     subdir = cache_dir / subdir_name
     subdir.mkdir(parents=True, exist_ok=True)
 
-    for filename, datum in data:
-        path = subdir / filename
+    return [model.from_json_string(p.read_text()) for p in subdir.iterdir()]
 
-        if path.exists():
-            raise FileExistsError(f"cannot overwrite cached data at {path}")
 
-        path.write_text(datum.to_json_string())
+_T1 = TypeVar("_T1")
+_T2 = TypeVar("_T2")
+
+
+def partition_results(
+    results: list[tuple[_T1, asyncio.Task[_T2]]],
+) -> list[tuple[_T1, _T2]]:
+    successes = []
+
+    for item, task in results:
+        exception = task.exception()
+        if exception is None:
+            successes.append((item, task.result()))
+        else:
+            logging.error(exception)
+
+    return successes
+
+
+def write_to_cache(
+    cache_dir: Path, subdir_name: str, filename: str, data: _ScamplersModel
+):
+    subdir = cache_dir / subdir_name
+    subdir.mkdir(parents=True, exist_ok=True)
+
+    path = subdir / filename
+
+    if path.exists():
+        raise FileExistsError(f"cannot overwrite cached data at {path}")
+
+    path.write_text(data.to_json_string())

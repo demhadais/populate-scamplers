@@ -122,7 +122,7 @@ dev = [
 requires-dist = [
     { name = "pydantic", specifier = ">=2.11.7" },
     { name = "pydantic-settings", specifier = ">=2.10.1" },
-    { name = "scamplepy", git = "https://github.com/demhadais/scamplers?subdirectory=rust%2Fscamplepy" },
+    { name = "scamplepy", git = "https://github.com/demhadais/scamplers?subdirectory=rust%2Fscamplepy&branch=fix%2Fbase64-encoding" },
 ]
 
 [package.metadata.requires-dev]
@@ -272,7 +272,7 @@ wheels = [
 [[package]]
 name = "scamplepy"
 version = "0.1.0"
-source = { git = "https://github.com/demhadais/scamplers?subdirectory=rust%2Fscamplepy#93c50eb120872f00d18f12741511ebd4486d2d79" }
+source = { git = "https://github.com/demhadais/scamplers?subdirectory=rust%2Fscamplepy&branch=fix%2Fbase64-encoding#03f8970d0042d0df765796cff649c1ba87959585" }
 
 [[package]]
 name = "typing-extensions"
