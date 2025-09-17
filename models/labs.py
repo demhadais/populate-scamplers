@@ -28,9 +28,7 @@ def _parse_new_labs(
 
 
 async def _email_person_map(client: ScamplersClient) -> dict[str, UUID]:
-    print(PersonQuery().to_json_string())
-    print(PersonQuery().to_base64_json())
-    people = await client.list_people(PersonQuery(names=[]))
+    people = await client.list_people(PersonQuery())
     people_map = {
         person.info.summary.email: person.info.id_
         for person in people
