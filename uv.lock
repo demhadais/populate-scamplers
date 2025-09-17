@@ -342,7 +342,7 @@ wheels = [
 [[package]]
 name = "scamplepy"
 version = "0.1.0"
-source = { git = "https://github.com/demhadais/scamplers?subdirectory=rust%2Fscamplepy#2ee8a643f3394edc15516b47dec38cb796e9887a" }
+source = { git = "https://github.com/demhadais/scamplers?subdirectory=rust%2Fscamplepy#8aaefa99398d26e39f8ca7a6f209dcc31ffc2762" }
 
 [[package]]
 name = "sniffio"
