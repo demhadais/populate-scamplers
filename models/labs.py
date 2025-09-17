@@ -30,7 +30,7 @@ def _parse_new_labs(
 async def _email_person_map(client: ScamplersClient) -> dict[str, UUID]:
     people = await client.list_people(PersonQuery())
     people_map = {
-        person.info.summary.email: person.info.id_
+        person.info.summary.email.lower(): person.info.id_
         for person in people
         if person.info.summary.email is not None
     }
@@ -50,7 +50,7 @@ async def csv_to_lab_creations(
     return _parse_new_labs(data, people, already_inserted_labs)
 
 
-async def write_labs_to_cache(
+def write_labs_to_cache(
     cache_dir: Path, request_response_pairs: list[tuple[NewLab, Lab]]
 ):
     for request, response in request_response_pairs:

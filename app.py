@@ -17,7 +17,7 @@ from models.institutions import (
     csv_to_institution_creations,
     write_institutions_to_cache,
 )
-from models.labs import csv_to_lab_creations
+from models.labs import csv_to_lab_creations, write_labs_to_cache
 from models.people import csv_to_person_creations, write_people_to_cache
 from read_write import CsvSpec, read_csv
 
@@ -84,7 +84,8 @@ async def _update_scamples_api(settings: "Settings"):
     if settings.labs is not None:
         data = read_csv(settings.labs)
         new_labs = await csv_to_lab_creations(client, data, cache_dir)
-        await _send_requests(client.create_lab, new_labs)
+        created_labs = await _send_requests(client.create_lab, new_labs)
+        write_labs_to_cache(cache_dir=cache_dir, request_response_pairs=created_labs)
 
 
 class Settings(BaseSettings):
