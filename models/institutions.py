@@ -21,7 +21,7 @@ def _parse_new_institutions(
     ]
 
 
-async def csv_to_institution_creations(
+async def csv_to_new_institutions(
     data: list[dict[str, Any]],
     cache_dir: Path,
 ) -> list[NewInstitution]:

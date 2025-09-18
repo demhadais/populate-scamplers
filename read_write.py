@@ -1,11 +1,43 @@
 import asyncio
 import csv
 from collections.abc import Iterable
+import datetime
 from pathlib import Path
 from typing import Any, Protocol, Self, TypeVar
 import logging
+from uuid import UUID
 
 from pydantic.main import BaseModel
+
+
+def to_snake_case(s: str):
+    return s.lower().replace(" ", "_")
+
+
+def eastcoast_9am_from_date_str(date_str: str) -> datetime.datetime:
+    date = datetime.date.fromisoformat(date_str)
+    return datetime.datetime(
+        year=date.year, month=date.month, day=date.day, hour=13, tzinfo=datetime.UTC
+    )
+
+
+def _recursive_getattr(obj: Any, path: str) -> Any:
+    split = path.split(".")
+    if len(split) == 1:
+        return getattr(obj, path)
+    else:
+        return _recursive_getattr(getattr(obj, split[0]), ".".join(split[1:]))
+
+
+def property_id_map(
+    property_path: str, id_path: str, data: list[Any]
+) -> dict[str, UUID]:
+    map = {
+        _recursive_getattr(d, property_path): _recursive_getattr(d, id_path)
+        for d in data
+    }
+    assert len(map) == len(data), f"property {property_path} is not unique"
+    return map
 
 
 def _rename_csv_fields(
@@ -14,7 +46,7 @@ def _rename_csv_fields(
 ) -> list[dict[str, Any]]:
     return [
         {
-            field_renaming.get(field, field.lower()): value
+            field_renaming.get(field, to_snake_case(field)): value
             for field, value in row.items()
         }
         for row in csv

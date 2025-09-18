@@ -6,7 +6,7 @@ from scamplepy.create import NewLab
 from scamplepy.query import PersonQuery
 from scamplepy.responses import Lab
 
-from read_write import read_from_cache, write_to_cache
+from read_write import property_id_map, read_from_cache, write_to_cache
 
 
 def _parse_new_labs(
@@ -27,25 +27,13 @@ def _parse_new_labs(
     return [lab for lab in new_labs if lab not in already_inserted_labs]
 
 
-async def _email_person_map(client: ScamplersClient) -> dict[str, UUID]:
-    people = await client.list_people(PersonQuery())
-    people_map = {
-        person.info.summary.email.lower(): person.info.id_
-        for person in people
-        if person.info.summary.email is not None
-    }
-
-    assert len(people) == len(people_map), "people do not have unique emails"
-
-    return people_map
-
-
-async def csv_to_lab_creations(
+async def csv_to_new_labs(
     client: ScamplersClient, data: list[dict[str, Any]], cache_dir: Path
 ) -> list[NewLab]:
     already_inserted_labs = read_from_cache(cache_dir, "labs", NewLab)
 
-    people = await _email_person_map(client)
+    people = await client.list_people(PersonQuery())
+    people = property_id_map("info.summary.email", "info.id_", people)
 
     return _parse_new_labs(data, people, already_inserted_labs)
 

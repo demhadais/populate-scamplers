@@ -14,11 +14,12 @@ from pydantic_settings import (
 from scamplepy import ScamplersClient
 
 from models.institutions import (
-    csv_to_institution_creations,
+    csv_to_new_institutions,
     write_institutions_to_cache,
 )
-from models.labs import csv_to_lab_creations, write_labs_to_cache
-from models.people import csv_to_person_creations, write_people_to_cache
+from models.labs import csv_to_new_labs, write_labs_to_cache
+from models.people import csv_to_new_people, write_people_to_cache
+from models.specimens import csvs_to_new_specimens
 from read_write import CsvSpec, read_csv
 
 POPULATE_SCAMPLERS = "populate-scamplers"
@@ -56,7 +57,7 @@ async def _update_scamples_api(settings: "Settings"):
 
     if settings.institutions is not None:
         data = read_csv(settings.institutions)
-        new_institutions = await csv_to_institution_creations(
+        new_institutions = await csv_to_new_institutions(
             data=data,
             cache_dir=cache_dir,
         )
@@ -71,7 +72,7 @@ async def _update_scamples_api(settings: "Settings"):
 
     if settings.people is not None:
         data = read_csv(settings.people)
-        new_people = await csv_to_person_creations(
+        new_people = await csv_to_new_people(
             client=client,
             data=data,
             cache_dir=settings.cache_dir,
@@ -83,9 +84,25 @@ async def _update_scamples_api(settings: "Settings"):
 
     if settings.labs is not None:
         data = read_csv(settings.labs)
-        new_labs = await csv_to_lab_creations(client, data, cache_dir)
+        new_labs = await csv_to_new_labs(client, data, cache_dir)
         created_labs = await _send_requests(client.create_lab, new_labs)
         write_labs_to_cache(cache_dir=cache_dir, request_response_pairs=created_labs)
+
+    if (settings.specimens is None) != (settings.specimen_measurements is None):
+        raise ValueError(
+            "must specify specimens and specimen measurements together or not at all"
+        )
+
+    if settings.specimens is not None and settings.specimen_measurements:
+        specimen_csv = read_csv(settings.specimens)
+        measurements_csv = read_csv(settings.specimen_measurements)
+        new_specimens = await csvs_to_new_specimens(
+            client,
+            specimen_csv=specimen_csv,
+            measurement_csv=measurements_csv,
+            cache_dir=cache_dir,
+        )
+        print(*(s.to_json_string() for s in new_specimens[0:10]))
 
 
 class Settings(BaseSettings):
@@ -103,6 +120,7 @@ class Settings(BaseSettings):
     people: CsvSpec | None = None
     labs: CsvSpec | None = None
     specimens: CsvSpec | None = None
+    specimen_measurements: CsvSpec | None = None
     suspensions: CsvSpec | None = None
     suspension_pools: CsvSpec | None = None
     gems: CsvSpec | None = None

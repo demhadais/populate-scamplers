@@ -64,7 +64,7 @@ async def _email_domain_institution_map(client: ScamplersClient) -> dict[str, UU
     return institution_domains
 
 
-async def csv_to_person_creations(
+async def csv_to_new_people(
     client: ScamplersClient,
     data: list[dict[str, Any]],
     cache_dir: Path,
