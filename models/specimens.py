@@ -1,3 +1,5 @@
+import datetime
+import logging
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -6,6 +8,7 @@ from scamplepy import ScamplersClient
 from scamplepy.create import (
     BlockFixative,
     FixedBlockEmbeddingMatrix,
+    FrozenBlockEmbeddingMatrix,
     Species,
     SpecimenMeasurementData,
     SuspensionFixative,
@@ -21,8 +24,71 @@ from scamplepy.create import (
     NewSpecimenMeasurement,
 )
 from scamplepy.query import LabQuery, PersonQuery
+from scamplepy.responses import Specimen
 
-from read_write import eastcoast_9am_from_date_str, property_id_map, to_snake_case
+from read_write import (
+    eastcoast_9am_from_date_str,
+    property_id_map,
+    read_from_cache,
+    to_snake_case,
+    write_to_cache,
+)
+
+
+def _parse_measurement_row(
+    row: dict[str, Any], specimen_date: datetime.datetime, people: dict[str, UUID]
+) -> list[NewSpecimenMeasurement]:
+    required_keys = {"specimen_readable_id", "measured_by"}
+
+    is_empty = all(row[key] is None for key in required_keys)
+    if is_empty:
+        return []
+
+    is_partially_empty = any(row[key] is None for key in required_keys)
+    if is_partially_empty:
+        raise ValueError("partially empty row")
+
+    measurements = []
+
+    if row["date_measured"]:
+        measured_at = eastcoast_9am_from_date_str(row["date_measured"])
+    else:
+        measured_at = specimen_date
+
+    measured_by = people[row["measured_by"]]
+
+    if row["instrument_name"] is not None:
+        instrument_name = row["instrument_name"]
+    else:
+        instrument_name = "unknown"
+
+    if row["rin"]:
+        measurements.append(
+            NewSpecimenMeasurement(
+                measured_by=measured_by,
+                data=SpecimenMeasurementData.Rin(
+                    measured_at=measured_at,
+                    instrument_name=instrument_name,
+                    value=float(row["rin"]),
+                ),
+            )
+        )
+    if row["dv200"]:
+        value = row["dv200"].removesuffix("%")
+        value = float(value) / 100
+        measurements.append(
+            NewSpecimenMeasurement(
+                measured_by=measured_by,
+                data=SpecimenMeasurementData.Dv200(
+                    measured_at=measured_at,
+                    instrument_name=instrument_name,
+                    value=value,
+                ),
+            )
+        )
+
+    return measurements
+
 
 type NewSpecimen = (
     NewFixedBlock
@@ -36,164 +102,127 @@ type NewSpecimen = (
 )
 
 
-def _parse_specimens(
-    data: list[dict[str, Any]],
+def _parse_specimen_row(
+    row: dict[str, Any],
+    measurements: dict[str, list[dict[str, Any]]],
     labs: dict[str, UUID],
-    people_by_name: dict[str, UUID],
-    people_by_email: dict[str, UUID],
-    already_inserted_specimens: list[NewSpecimen],
-) -> list[NewSpecimen]:
+    people: dict[str, UUID],
+) -> NewSpecimen | None:
+    necessary_keys = {"name", "date_received", "submitter_email", "lab_name", "species"}
+
+    is_empty = all(row[key] is None for key in necessary_keys)
+    if is_empty:
+        return None
+
+    is_partially_empty = any(row[key] is None for key in necessary_keys)
+    if is_partially_empty:
+        raise ValueError("partially empty row")
+
+    row["lab_id"] = labs[row["lab_name"]]
+    row["submitted_by"] = people[row["submitter_email"].lower()]
+    row["received_at"] = eastcoast_9am_from_date_str(row["date_received"])
+    if row["returned_by"] not in (None, "0"):
+        row["returned_by"] = people[row["returner_email"]]
+
+    if row["date_returned"]:
+        row["returned_at"] = eastcoast_9am_from_date_str(row["date_returned"])
+
+    if row["species"] == "Homo sapiens + Mus musculus (PDX)":
+        row["species"] = [Species.HomoSapiens, Species.MusMusculus]
+    else:
+        row["species"] = [Species(to_snake_case(row["species"]))]
+
+    row["notes"] = "; ".join(
+        row[key]
+        for key in [
+            "condition",
+            "tissue",
+            "storage_details",
+            "notes",
+        ]
+        if row[key] is not None
+    )
+
+    parsed_measurements = []
+    if measurement_rows := measurements.get(row["readable_id"]):
+        for measurement_row in measurement_rows:
+            parsed_measurements += _parse_measurement_row(
+                measurement_row, row["received_at"], people=people
+            )
+
+    row["measurements"] = parsed_measurements
+
     common_keys = {
         "readable_id",
         "name",
+        "received_at",
+        "lab_id",
+        "submitted_by",
+        "returned_by",
+        "returned_at",
+        "species",
+        "measurements",
+        "notes",
     }
+    data = {key: row[key] for key in common_keys if key in row}
 
-    specimens = []
-    errors = []
+    if (
+        row["storage_details"] is not None
+        and "cryostor" in row["storage_details"].lower()
+    ):
+        row["storage_buffer"] = "cryostor"
 
-    for row in data:
-        if not row["date_received"]:
-            continue
-        if not row["submitter_email"]:
-            continue
-        if not row["lab_name"]:
-            continue
+    em = row["embedding_matrix"]
+    if em is not None:
+        data["embedded_in"] = {
+            "CMC": FrozenBlockEmbeddingMatrix.CarboxymethylCellulose,
+            "OCT": FrozenBlockEmbeddingMatrix.OptimalCuttingTemperatureCompound,
+        }.get(em)
+        if data["embedded_in"] is None:
+            data["embedded_in"] = FixedBlockEmbeddingMatrix(to_snake_case(em))
 
-        simple_data = {k: v for k, v in row.items() if k in common_keys}
+    match (row["type"], row["preservation_method"]):
+        case ("Block", preservation):
+            preservation_to_fixative_and_klass = {
+                "Formaldehyde-derivative fixed": (
+                    BlockFixative.FormaldehydeDerivative,
+                    NewFixedBlock,
+                ),
+                "Formaldehyde-derivative fixed & frozen": (
+                    BlockFixative.FormaldehydeDerivative,
+                    NewFrozenBlock,
+                ),
+                "Frozen": (None, NewFrozenBlock),
+            }
+            data["fixative"], klass = preservation_to_fixative_and_klass[preservation]
 
-        simple_data["lab_id"] = labs[row["lab_name"]]
-        simple_data["submitted_by"] = people_by_email[row["submitter_email"].lower()]
-        simple_data["received_at"] = eastcoast_9am_from_date_str(row["date_received"])
-        if row["returned_by"]:
-            simple_data["returned_by"] = people_by_name[row["returned_by"]]
-        if row["date_returned"]:
-            simple_data["returned_at"] = eastcoast_9am_from_date_str(
-                row["date_returned"]
+            return klass(**data)
+        case ("Tissue", "Cryopreserved"):
+            return NewCryopreservedTissue(**data)
+        case ("Tissue", "DSP-fixed" | "Scale DSP-Fixed"):
+            return NewFixedTissue(
+                **data, fixative=TissueFixative.DithiobisSuccinimidylpropionate
             )
+        case ("Tissue", "Frozen"):
+            return NewFrozenTissue(**data)
+        case ("Cell Suspension" | "Nucleus Suspension", "Cryopreserved"):
+            return NewCryopreservedSuspension(**data)
+        case ("Cell Suspension" | "Nucleus Suspension", None):
+            return NewFixedOrFreshSuspension(**data)
+        case ("Cell Suspension" | "Nucleus Suspension", "Frozen"):
+            return NewFrozenSuspension(**data)
+        case ("Cell Suspension" | "Nucleus Suspension", preservation):
+            fixatives = {
+                "Formaldehyde-derivative fixed": SuspensionFixative.FormaldehydeDerivative,
+                "DSP-fixed": SuspensionFixative.DithiobisSuccinimidylpropionate,
+                "Scale DSP-Fixed": SuspensionFixative.DithiobisSuccinimidylpropionate,
+                "Fresh": None,
+            }
+            data["fixative"] = fixatives[preservation]
 
-        if not row["species"]:
-            continue
-
-        if row["species"] == "Homo sapiens + Mus musculus (PDX)":
-            simple_data["species"] = [Species.HomoSapiens, Species.MusMusculus]
-        else:
-            simple_data["species"] = [Species(to_snake_case(row["species"]))]
-
-        simple_data["notes"] = "; ".join(
-            s
-            for s in [
-                row["condition"],
-                row["tissue"],
-                row["storage_details"],
-                row["notes"],
-            ]
-        )
-        if "cryostor" in row["storage_details"].lower():
-            simple_data["storage_buffer"] = "cryostor"
-
-        match (row["type"], row["preservation_method"]):
-            case ("Block", "Formaldehyde-derivative fixed"):
-                specimen = NewFixedBlock(
-                    **simple_data,
-                    fixative=BlockFixative.FormaldehydeDerivative,
-                    embedded_in=FixedBlockEmbeddingMatrix(
-                        to_snake_case(row["embedding_matrix"])
-                    ),
-                )
-            case (_, _):
-                continue
-            case ("Block", "Frozen"):
-                specimen = NewFrozenBlock
-            case ("Block", "Fresh"):
-                specimen = NewFrozenBlock
-            case ("Tissue", "Cryopreserved"):
-                specimen = NewCryopreservedTissue
-            case ("Tissue", "DSP-fixed" | "Scale DSP-Fixed"):
-                specimen = NewFixedTissue(
-                    fixative=TissueFixative.DithiobisSuccinimidylpropionate
-                )
-            case ("Tissue", "Frozen"):
-                specimen = NewFrozenTissue
-            case ("Cell Suspension", "Cryopreserved"):
-                specimen = NewCryopreservedSuspension
-            case ("Cell Suspension" | "Nucleus Suspension", f):
-                if f == "Formaldehyde-derivative fixed":
-                    fixative = SuspensionFixative.FormaldehydeDerivative
-                elif f == "DSP-fixed" or f == "Scale DSP-fixed":
-                    fixative = SuspensionFixative.DithiobisSuccinimidylpropionate
-                specimen = NewFixedOrFreshSuspension
-            case ("Cell Suspension" | "Nucleus Suspension", "Frozen"):
-                specimen = NewFrozenSuspension
-            case ("", ""):
-                continue
-            case (ty, preservation):
-                # This error reads nicely because `preservation` is something like "Formaldehyde-derivative fixed"
-                errors.append(
-                    ValueError(f"unexpected specimen details: {preservation} {ty}")
-                )
-                continue
-
-        if specimen in already_inserted_specimens:
-            continue
-
-        specimens.append(specimen)
-
-    if errors:
-        raise ValueError(
-            f"errors encountered while parsing specimens:\n{'\n'.join((f'{id}: {e}' for id, e in errors))}"
-        )
-
-    return specimens
-
-
-def _parse_measurements(
-    data: list[dict[str, Any]], people_by_email: dict[str, UUID]
-) -> dict[str, list[NewSpecimenMeasurement]]:
-    measurements = {}
-
-    for row in data:
-        if not row["measured_by"]:
-            continue
-
-        specimen_readable_id = row["specimen_readable_id"]
-        measured_by = people_by_email[row["measured_by"]]
-        if row["date_measured"]:
-            measured_at = eastcoast_9am_from_date_str(row["date_measured"])
-        else:
-            measured_at = eastcoast_9am_from_date_str("1999-12-31")
-
-        this_row_measurements = []
-        if row["rin"]:
-            this_row_measurements.append(
-                NewSpecimenMeasurement(
-                    measured_by=measured_by,
-                    data=SpecimenMeasurementData.Rin(
-                        measured_at=measured_at,
-                        instrument_name="unknown",
-                        value=float(row["rin"]),
-                    ),
-                )
-            )
-        if row["dv200"]:
-            this_row_measurements.append(
-                NewSpecimenMeasurement(
-                    measured_by=measured_by,
-                    data=SpecimenMeasurementData.Dv200(
-                        measured_at=measured_at,
-                        instrument_name="unknown",
-                        value=float(row["dv200"].removesuffix("%")) / 100,
-                    ),
-                )
-            )
-
-        if specimen_readable_id in measurements:
-            measurements[specimen_readable_id] = (
-                measurements[specimen_readable_id] + this_row_measurements
-            )
-        else:
-            measurements[specimen_readable_id] = this_row_measurements
-
-    return measurements
+            return NewFixedOrFreshSuspension(**data)
+        case (ty, preservation):
+            raise ValueError(f"unexpected specimen details: {preservation} {ty}")
 
 
 async def csvs_to_new_specimens(
@@ -206,38 +235,64 @@ async def csvs_to_new_specimens(
     labs = property_id_map("info.summary.name", "info.id_", labs)
 
     people = await client.list_people(PersonQuery())
-    people_by_name = property_id_map(
-        "info.summary.name",
-        "info.id_",
-        [
-            person
-            for person in people
-            if person.info.summary.name
-            in [
-                "Emily Soja",
-                "Jessica Grassmann",
-                "Shruti Bhargava",
-                "Allison McNeilly",
-            ]
-        ],
+    people = property_id_map("info.summary.email", "info.id_", people)
+    people = people | {k.lower(): v for k, v in people.items()}
+
+    measurements = {}
+    for row in measurement_csv:
+        specimen_readable_id = row["specimen_readable_id"]
+        if specimen_readable_id is None:
+            continue
+
+        if specimen_readable_id in measurements:
+            measurements[specimen_readable_id].append(row)
+        else:
+            measurements[specimen_readable_id] = [row]
+
+    cached_specimens = []
+    for ty in [
+        NewFixedBlock,
+        NewFrozenBlock,
+        NewCryopreservedTissue,
+        NewFixedTissue,
+        NewFrozenTissue,
+        NewCryopreservedSuspension,
+        NewFixedOrFreshSuspension,
+        NewFrozenSuspension,
+    ]:
+        try:
+            cached_specimens += read_from_cache(cache_dir, "specimens", ty)
+        except Exception:
+            continue
+
+    specimens = []
+    for row in specimen_csv:
+        try:
+            if specimen := _parse_specimen_row(
+                row, measurements=measurements, labs=labs, people=people
+            ):
+                if specimen not in cached_specimens:
+                    specimens.append(specimen)
+        except Exception as e:
+            logging.error(f"error while parsing specimen {row['readable_id']}: {e}")
+
+    assert len(specimens) == len({s.inner.readable_id for s in specimens}), (
+        "specimen IDs are not unique"
     )
-    people_by_email = property_id_map("info.summary.email", "info.id_", people)
-    people_by_email = people_by_email | {
-        k.lower(): v for k, v in people_by_email.items()
-    }
-
-    specimens = _parse_specimens(
-        specimen_csv,
-        labs=labs,
-        people_by_name=people_by_name,
-        people_by_email=people_by_email,
-        already_inserted_specimens=[],
-    )
-
-    measurements = _parse_measurements(measurement_csv, people_by_email=people_by_email)
-
-    for specimen in specimens:
-        if m := measurements.get(specimen.inner.readable_id):
-            specimen.inner.measurements = m
 
     return specimens
+
+
+def write_specimens_to_cache(
+    cache_dir: Path, request_response_pairs: list[tuple[NewSpecimen, Specimen]]
+):
+    for request, response in request_response_pairs:
+        if not request or not response:
+            continue
+
+        write_to_cache(
+            cache_dir,
+            subdir_name="specimens",
+            filename=f"{response.info.id_}.json",
+            data=request,
+        )

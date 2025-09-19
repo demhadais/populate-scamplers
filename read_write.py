@@ -65,7 +65,7 @@ def read_csv(spec: CsvSpec) -> list[dict[str, Any]]:
         raise NotImplementedError("fetching data from OneDrive is not yet supported")
 
     with csv_path.open(encoding="UTF-8-SIG") as f:
-        data = csv.DictReader(f)
+        data = csv.DictReader(f, quoting=csv.QUOTE_NOTNULL)
 
         return _rename_csv_fields(data, spec.field_renaming)
 

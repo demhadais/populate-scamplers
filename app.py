@@ -19,7 +19,7 @@ from models.institutions import (
 )
 from models.labs import csv_to_new_labs, write_labs_to_cache
 from models.people import csv_to_new_people, write_people_to_cache
-from models.specimens import csvs_to_new_specimens
+from models.specimens import csvs_to_new_specimens, write_specimens_to_cache
 from read_write import CsvSpec, read_csv
 
 POPULATE_SCAMPLERS = "populate-scamplers"
@@ -102,7 +102,10 @@ async def _update_scamples_api(settings: "Settings"):
             measurement_csv=measurements_csv,
             cache_dir=cache_dir,
         )
-        print(*(s.to_json_string() for s in new_specimens[0:10]))
+        created_specimens = await _send_requests(client.create_specimen, new_specimens)
+        write_specimens_to_cache(
+            cache_dir=cache_dir, request_response_pairs=created_specimens
+        )
 
 
 class Settings(BaseSettings):
