@@ -225,6 +225,18 @@ def _parse_specimen_row(
             raise ValueError(f"unexpected specimen details: {preservation} {ty}")
 
 
+SPECIMEN_SUBDIRS = {
+    NewCryopreservedSuspension: "specimens/cryopreserved-suspension",
+    NewCryopreservedTissue: "specimens/cryopreserved-tissue",
+    NewFixedBlock: "specimens/fixed-block",
+    NewFixedOrFreshSuspension: "specimens/fixed-or-fresh-suspension",
+    NewFixedTissue: "specimens/fixed-tissue",
+    NewFrozenBlock: "specimens/frozen-block",
+    NewFrozenTissue: "specimens/frozen-tissue",
+    NewFrozenSuspension: "specimens/frozen-suspension",
+}
+
+
 async def csvs_to_new_specimens(
     client: ScamplersClient,
     specimen_csv: list[dict[str, Any]],
@@ -260,10 +272,7 @@ async def csvs_to_new_specimens(
         NewFixedOrFreshSuspension,
         NewFrozenSuspension,
     ]:
-        try:
-            cached_specimens += read_from_cache(cache_dir, "specimens", ty)
-        except Exception:
-            continue
+        cached_specimens += read_from_cache(cache_dir, SPECIMEN_SUBDIRS[ty], ty)
 
     specimens = []
     for row in specimen_csv:
@@ -292,7 +301,7 @@ def write_specimens_to_cache(
 
         write_to_cache(
             cache_dir,
-            subdir_name="specimens",
+            subdir_name=SPECIMEN_SUBDIRS[type(request)],
             filename=f"{response.info.id_}.json",
             data=request,
         )
