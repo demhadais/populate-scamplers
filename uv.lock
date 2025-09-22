@@ -192,7 +192,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "pydantic", specifier = ">=2.11.7" },
     { name = "pydantic-settings", specifier = ">=2.10.1" },
-    { name = "scamplepy", git = "https://github.com/demhadais/scamplers?subdirectory=rust%2Fscamplepy" },
+    { name = "scamplepy", git = "https://github.com/demhadais/scamplers?subdirectory=rust%2Fscamplepy&branch=fix%2Fremove-suspension-target-reads-per-cell" },
 ]
 
 [package.metadata.requires-dev]
@@ -342,7 +342,7 @@ wheels = [
 [[package]]
 name = "scamplepy"
 version = "0.1.0"
-source = { git = "https://github.com/demhadais/scamplers?subdirectory=rust%2Fscamplepy#a91db451f2766d82852da9c2b4a49f3af8fbd1f6" }
+source = { git = "https://github.com/demhadais/scamplers?subdirectory=rust%2Fscamplepy&branch=fix%2Fremove-suspension-target-reads-per-cell#9df11b72ca541077416b47add03c243ce55d9114" }
 
 [[package]]
 name = "sniffio"

@@ -1,10 +1,8 @@
-import asyncio
 import csv
 from collections.abc import Iterable
 import datetime
 from pathlib import Path
 from typing import Any, Protocol, Self, TypeVar
-import logging
 from uuid import UUID
 
 from pydantic.main import BaseModel
@@ -55,6 +53,7 @@ def _rename_csv_fields(
 
 class CsvSpec(BaseModel):
     path: Path | None = None
+    head_row: int = 0
     onedrive_file_id: str | None = None
     field_renaming: dict[str, str] = {}
 
@@ -65,9 +64,24 @@ def read_csv(spec: CsvSpec) -> list[dict[str, Any]]:
         raise NotImplementedError("fetching data from OneDrive is not yet supported")
 
     with csv_path.open(encoding="UTF-8-SIG") as f:
+        for _ in range(0, spec.head_row):
+            next(f)
+
         data = csv.DictReader(f, quoting=csv.QUOTE_NOTNULL)
 
         return _rename_csv_fields(data, spec.field_renaming)
+
+
+def row_is_empty(row: dict[str, Any], necessary_keys: set[str]) -> bool:
+    is_empty = all(row[key] is None for key in necessary_keys)
+    if is_empty:
+        return True
+
+    is_partially_empty = any(row[key] is None for key in necessary_keys)
+    if is_partially_empty:
+        raise ValueError("partially empty row")
+
+    return False
 
 
 class _ScamplersModel(Protocol):
@@ -89,21 +103,6 @@ def read_from_cache(cache_dir: Path, subdir_name: str, model: type[T]) -> list[T
 
 _T1 = TypeVar("_T1")
 _T2 = TypeVar("_T2")
-
-
-def partition_results(
-    results: list[tuple[_T1, asyncio.Task[_T2]]],
-) -> list[tuple[_T1, _T2]]:
-    successes = []
-
-    for item, task in results:
-        exception = task.exception()
-        if exception is None:
-            successes.append((item, task.result()))
-        else:
-            logging.error(exception)
-
-    return successes
 
 
 def write_to_cache(

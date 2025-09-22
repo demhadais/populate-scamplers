@@ -20,6 +20,7 @@ from models.institutions import (
 from models.labs import csv_to_new_labs, write_labs_to_cache
 from models.people import csv_to_new_people, write_people_to_cache
 from models.specimens import csvs_to_new_specimens, write_specimens_to_cache
+from models.suspensions import csv_to_new_suspensions
 from read_write import CsvSpec, read_csv
 
 POPULATE_SCAMPLERS = "populate-scamplers"
@@ -106,6 +107,13 @@ async def _update_scamples_api(settings: "Settings"):
         write_specimens_to_cache(
             cache_dir=cache_dir, request_response_pairs=created_specimens
         )
+
+    if settings.suspensions is not None:
+        suspension_csv = read_csv(settings.suspensions)
+        new_suspensions = await csv_to_new_suspensions(
+            client, suspension_csv, cache_dir=cache_dir
+        )
+        new_suspensions = new_suspensions  # A hack for ruff
 
 
 class Settings(BaseSettings):

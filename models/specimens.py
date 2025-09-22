@@ -30,6 +30,7 @@ from read_write import (
     eastcoast_9am_from_date_str,
     property_id_map,
     read_from_cache,
+    row_is_empty,
     to_snake_case,
     write_to_cache,
 )
@@ -110,13 +111,10 @@ def _parse_specimen_row(
 ) -> NewSpecimen | None:
     necessary_keys = {"name", "date_received", "submitter_email", "lab_name", "species"}
 
-    is_empty = all(row[key] is None for key in necessary_keys)
+    is_empty = row_is_empty(row, necessary_keys)
+
     if is_empty:
         return None
-
-    is_partially_empty = any(row[key] is None for key in necessary_keys)
-    if is_partially_empty:
-        raise ValueError("partially empty row")
 
     row["lab_id"] = labs[row["lab_name"]]
     row["submitted_by"] = people[row["submitter_email"].lower()]
