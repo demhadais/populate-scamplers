@@ -42,7 +42,10 @@ async def _send_requests(
     responses = []
     async with asyncio.TaskGroup() as tg:
         for d in data:
-            responses.append((d, tg.create_task(_catch_exception(func(d)))))
+            coroutine = func(d)
+            coroutine_with_caught_exception = _catch_exception(coroutine)
+            task = tg.create_task(coroutine_with_caught_exception)
+            responses.append((d, task))
 
     return [(d, r.result()) for d, r in responses]
 

@@ -31,59 +31,52 @@ from read_write import (
     property_id_map,
     read_from_cache,
     row_is_empty,
+    str_to_float,
     to_snake_case,
     write_to_cache,
 )
 
 
 def _parse_measurement_row(
-    row: dict[str, Any], specimen_date: datetime.datetime, people: dict[str, UUID]
+    row: dict[str, Any],
+    specimen_received_at: datetime.datetime,
+    people: dict[str, UUID],
 ) -> list[NewSpecimenMeasurement]:
     required_keys = {"specimen_readable_id", "measured_by"}
 
-    is_empty = all(row[key] is None for key in required_keys)
+    is_empty = row_is_empty(row, required_keys)
     if is_empty:
         return []
-
-    is_partially_empty = any(row[key] is None for key in required_keys)
-    if is_partially_empty:
-        raise ValueError("partially empty row")
 
     measurements = []
 
     if row["date_measured"]:
-        measured_at = eastcoast_9am_from_date_str(row["date_measured"])
+        specimen_received_at = eastcoast_9am_from_date_str(row["date_measured"])
     else:
-        measured_at = specimen_date
+        specimen_received_at = specimen_received_at
 
     measured_by = people[row["measured_by"]]
-
-    if row["instrument_name"] is not None:
-        instrument_name = row["instrument_name"]
-    else:
-        instrument_name = "unknown"
+    instrument_name = row["instrument_name"]
 
     if row["rin"]:
         measurements.append(
             NewSpecimenMeasurement(
                 measured_by=measured_by,
                 data=SpecimenMeasurementData.Rin(
-                    measured_at=measured_at,
+                    measured_at=specimen_received_at,
                     instrument_name=instrument_name,
-                    value=float(row["rin"]),
+                    value=str_to_float(row["rin"]),
                 ),
             )
         )
     if row["dv200"]:
-        value = row["dv200"].removesuffix("%")
-        value = float(value) / 100
         measurements.append(
             NewSpecimenMeasurement(
                 measured_by=measured_by,
                 data=SpecimenMeasurementData.Dv200(
-                    measured_at=measured_at,
+                    measured_at=specimen_received_at,
                     instrument_name=instrument_name,
-                    value=value,
+                    value=str_to_float(row["rin"]),
                 ),
             )
         )
@@ -109,78 +102,75 @@ def _parse_specimen_row(
     labs: dict[str, UUID],
     people: dict[str, UUID],
 ) -> NewSpecimen | None:
-    necessary_keys = {"name", "date_received", "submitter_email", "lab_name", "species"}
+    necessary_keys = {
+        "name",
+        "date_received",
+        "submitter_email",
+        "lab_name",
+        "species",
+        "tissue",
+    }
 
     is_empty = row_is_empty(row, necessary_keys)
 
     if is_empty:
         return None
 
-    row["lab_id"] = labs[row["lab_name"]]
-    row["submitted_by"] = people[row["submitter_email"].lower()]
-    row["received_at"] = eastcoast_9am_from_date_str(row["date_received"])
+    data = {
+        simple_key: row[simple_key].strip()
+        for simple_key in ["name", "readable_id", "tissue"]
+    }
+
+    data["lab_id"] = labs[row["lab_name"]]
+
+    data["submitted_by"] = people[row["submitter_email"].lower()]
+
+    data["received_at"] = eastcoast_9am_from_date_str(row["date_received"])
+
+    data["returned_by"] = None
+
     if row["returned_by"] not in (None, "0"):
-        row["returned_by"] = people[row["returner_email"]]
+        data["returned_by"] = people[row["returner_email"]]
 
     if row["date_returned"]:
-        row["returned_at"] = eastcoast_9am_from_date_str(row["date_returned"])
+        data["returned_at"] = eastcoast_9am_from_date_str(row["date_returned"])
 
     if row["species"] == "Homo sapiens + Mus musculus (PDX)":
-        row["species"] = [Species.HomoSapiens, Species.MusMusculus]
+        data["species"] = [Species.HomoSapiens, Species.MusMusculus]
     else:
-        row["species"] = [Species(to_snake_case(row["species"]))]
+        data["species"] = [Species(to_snake_case(row["species"]))]
 
-    row["notes"] = "; ".join(
-        row[key]
+    data["additional_data"] = {
+        key: row[key]
         for key in [
             "condition",
-            "tissue",
-            "storage_details",
             "notes",
         ]
         if row[key] is not None
-    )
+    }
+    if len(data["additional_data"]) == 0:
+        del data["additional_data"]
 
     parsed_measurements = []
-    if measurement_rows := measurements.get(row["readable_id"]):
+    if measurement_rows := measurements.get(data["readable_id"]):
         for measurement_row in measurement_rows:
             parsed_measurements += _parse_measurement_row(
-                measurement_row, row["received_at"], people=people
+                measurement_row, specimen_received_at=data["received_at"], people=people
             )
 
-    row["measurements"] = parsed_measurements
-
-    common_keys = {
-        "readable_id",
-        "name",
-        "received_at",
-        "lab_id",
-        "submitted_by",
-        "returned_by",
-        "returned_at",
-        "species",
-        "measurements",
-        "notes",
-    }
-    data = {key: row[key] for key in common_keys if key in row}
-
-    if (
-        row["storage_details"] is not None
-        and "cryostor" in row["storage_details"].lower()
-    ):
-        row["storage_buffer"] = "cryostor"
-
-    em = row["embedding_matrix"]
-    if em is not None:
+    preliminary_em = row["embedding_matrix"]
+    if preliminary_em is not None:
         data["embedded_in"] = {
             "CMC": FrozenBlockEmbeddingMatrix.CarboxymethylCellulose,
             "OCT": FrozenBlockEmbeddingMatrix.OptimalCuttingTemperatureCompound,
-        }.get(em)
+        }.get(preliminary_em)
         if data["embedded_in"] is None:
-            data["embedded_in"] = FixedBlockEmbeddingMatrix(to_snake_case(em))
+            data["embedded_in"] = FixedBlockEmbeddingMatrix(
+                to_snake_case(preliminary_em)
+            )
 
     match (row["type"], row["preservation_method"]):
-        case ("Block", preservation):
+        case ("Block" | "Curl", preservation):
             preservation_to_fixative_and_klass = {
                 "Formaldehyde-derivative fixed": (
                     BlockFixative.FormaldehydeDerivative,

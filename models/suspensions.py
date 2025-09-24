@@ -17,10 +17,12 @@ from read_write import (
     eastcoast_9am_from_date_str,
     property_id_map,
     row_is_empty,
+    str_to_float,
     to_snake_case,
 )
 
 
+# TODO: Each measurement set needs to split out into its own function
 def _parse_suspension_row(
     row: dict[str, Any],
     specimens: dict[str, Specimen],
@@ -57,10 +59,10 @@ def _parse_suspension_row(
         if row[key] is not None
     ]
 
-    row["target_cell_recovery"] = float(row["target_cell_recovery"].replace(",", ""))
+    row["target_cell_recovery"] = str_to_float(row["target_cell_recovery"])
 
     if lysis_duration := row["lysis_duration_minutes"]:
-        row["lysis_duration_minutes"] = float(lysis_duration)
+        row["lysis_duration_minutes"] = str_to_float(lysis_duration)
 
     row["notes"] = "; ".join(
         row[key]
@@ -135,7 +137,7 @@ def _parse_suspension_row(
                 measured_at=measured_at,
                 instrument_name=cell_counter,
                 counting_method=cell_counting_method,
-                value=float(row[key].replace(",", "")),
+                value=str_to_float(row[key]),
                 unit=(row["biological_material"], VolumeUnit.Millliter),
             ),
         )
@@ -171,11 +173,32 @@ def _parse_suspension_row(
             is_post_hybridization=is_post_hybdridization,
             data=SuspensionMeasurementFields.Volume(
                 measured_at=measured_at,
-                value=float(row[key].replace(",", "")),
+                value=str_to_float(row[key]),
                 unit=VolumeUnit.Microliter,
             ),
         )
         row["measurements"].append(measurement)
+
+    viabilities = [
+        ("customer_cell_viability_(%)", customer_id, False, customer_measured_at),
+        ("scbl_cell_viability_(%)", first_preparer, False, scbl_measured_at),
+        (
+            "scbl_cell_viability_(post-adjustment)_(%)",
+            first_preparer,
+            False,
+            scbl_measured_at,
+        ),
+    ]
+    for key, measured_by, is_post_hybridization, measured_at in viabilities:
+        measurement = NewSuspensionMeasurement(
+            measured_by=measured_by,
+            is_post_hybridization=is_post_hybdridization,
+            data=SuspensionMeasurementFields.Viability(
+                measured_at=measured_at,
+                value=str_to_float(row[key]),
+                instrument_name="unknown",
+            ),
+        )
 
     keys = {
         "readable_id",

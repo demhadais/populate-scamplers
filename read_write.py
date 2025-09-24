@@ -12,6 +12,15 @@ def to_snake_case(s: str):
     return s.lower().replace(" ", "_")
 
 
+def str_to_float(s: str) -> float:
+    f = float(s.replace(",", "").removesuffix("%"))
+
+    if "%" in s:
+        f = f / 100
+
+    return f
+
+
 def eastcoast_9am_from_date_str(date_str: str) -> datetime.datetime:
     date = datetime.date.fromisoformat(date_str)
     return datetime.datetime(

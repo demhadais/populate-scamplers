@@ -6,7 +6,7 @@ from scamplepy.create import NewPerson
 from scamplepy.query import InstitutionQuery
 from scamplepy.responses import Person
 
-from read_write import read_from_cache, write_to_cache
+from read_write import read_from_cache, row_is_empty, write_to_cache
 
 
 def _parse_new_people(
@@ -15,6 +15,11 @@ def _parse_new_people(
     already_inserted_people: list[NewPerson],
 ) -> list[NewPerson]:
     for row in data:
+        necessary_keys = {"name", "email"}
+
+        if row_is_empty(row, necessary_keys):
+            continue
+
         if row.get("email_domain") is not None:
             raise ValueError("'email_domain' should not be a field in people data")
 
@@ -54,6 +59,7 @@ async def _email_domain_institution_map(client: ScamplersClient) -> dict[str, UU
         "Connecticut Children’s Research Institute": "connecticutchildrens.org",
         "National Institutes of Health": "nih.gov",
         "Yale University": "yale.edu",
+        "Pennsylvania State University": "psu.edu",
     }
 
     institution_domains = {
