@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Errors generated during testing
+.errors

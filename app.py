@@ -12,16 +12,16 @@ from pydantic_settings import (
     TomlConfigSettingsSource,
 )
 from scamplepy import ScamplersClient
+from scamplepy.errors import ScamplersErrorResponse
 
 from models.institutions import (
     csv_to_new_institutions,
-    write_institutions_to_cache,
 )
-from models.labs import csv_to_new_labs, write_labs_to_cache
-from models.people import csv_to_new_people, write_people_to_cache
-from models.specimens import csvs_to_new_specimens, write_specimens_to_cache
-from models.suspensions import csv_to_new_suspensions
-from read_write import CsvSpec, read_csv
+from models.labs import csv_to_new_labs
+from models.people import csv_to_new_people
+from models.specimen_measurements import csv_to_new_specimen_measurements
+from models.specimens import csv_to_new_specimens
+from utils import CsvSpec, read_csv
 
 POPULATE_SCAMPLERS = "populate-scamplers"
 
@@ -29,21 +29,45 @@ _Req = TypeVar("_Req")
 _Ret = TypeVar("_Ret")
 
 
-async def _catch_exception(coro: Coroutine[_Ret, Any, _Ret]) -> _Ret | None:
+async def _catch_exception(
+    coro: Coroutine[_Ret, Any, _Ret], log_error: bool, error_path: Path | None
+) -> _Ret | None:
     try:
         return await coro
-    except Exception as e:
-        logging.error(e)
+    except ScamplersErrorResponse as e:
+        if log_error:
+            logging.error(e)
+        if error_path is not None:
+            infix = 0
+            while error_path.exists():
+                error_path = error_path.with_name(
+                    error_path.stem + f"-{infix}" + error_path.suffix
+                )
+                if error_path.exists():
+                    infix += 1
+
+            error_path.write_bytes(e.error._0.to_json_bytes())
 
 
 async def _send_requests(
-    func: Callable[[_Req], Coroutine[_Ret, Any, _Ret]], data: Iterable[_Req]
+    func: Callable[[_Req], Coroutine[_Ret, Any, _Ret]],
+    data: Iterable[_Req],
+    log_errors: bool,
+    error_path_spec: tuple[Path, Callable[[_Req], str]] | None = None,
 ) -> list[tuple[_Req, _Ret]]:
     responses = []
     async with asyncio.TaskGroup() as tg:
         for d in data:
             coroutine = func(d)
-            coroutine_with_caught_exception = _catch_exception(coroutine)
+
+            error_path = None
+            if error_path_spec is not None:
+                error_dir, error_path_creator = error_path_spec
+                error_path = (error_dir / error_path_creator(d)).with_suffix(".json")
+
+            coroutine_with_caught_exception = _catch_exception(
+                coroutine, log_errors, error_path
+            )
             task = tg.create_task(coroutine_with_caught_exception)
             responses.append((d, task))
 
@@ -57,66 +81,60 @@ async def _update_scamples_api(settings: "Settings"):
         accept_invalid_certificates=settings.accept_invalid_certificates,
     )
 
-    cache_dir = settings.cache_dir
+    errors_dir = settings.errors_dir
+    log_errors = settings.log_errors
 
-    if settings.institutions is not None:
-        data = read_csv(settings.institutions)
+    if institutions := settings.institutions:
+        data = read_csv(institutions)
         new_institutions = await csv_to_new_institutions(
-            data=data,
-            cache_dir=cache_dir,
-        )
-        created_institutions = await _send_requests(
-            client.create_institution, new_institutions
-        )
-
-        write_institutions_to_cache(
-            cache_dir=settings.cache_dir,
-            request_response_pairs=created_institutions,
-        )
-
-    if settings.people is not None:
-        data = read_csv(settings.people)
-        new_people = await csv_to_new_people(
-            client=client,
-            data=data,
-            cache_dir=settings.cache_dir,
-        )
-        created_people = await _send_requests(client.create_person, new_people)
-        write_people_to_cache(
-            cache_dir=cache_dir, request_response_pairs=created_people
-        )
-
-    if settings.labs is not None:
-        data = read_csv(settings.labs)
-        new_labs = await csv_to_new_labs(client, data, cache_dir)
-        created_labs = await _send_requests(client.create_lab, new_labs)
-        write_labs_to_cache(cache_dir=cache_dir, request_response_pairs=created_labs)
-
-    if (settings.specimens is None) != (settings.specimen_measurements is None):
-        raise ValueError(
-            "must specify specimens and specimen measurements together or not at all"
-        )
-
-    if settings.specimens is not None and settings.specimen_measurements:
-        specimen_csv = read_csv(settings.specimens)
-        measurements_csv = read_csv(settings.specimen_measurements)
-        new_specimens = await csvs_to_new_specimens(
             client,
-            specimen_csv=specimen_csv,
-            measurement_csv=measurements_csv,
-            cache_dir=cache_dir,
+            data,
         )
-        created_specimens = await _send_requests(client.create_specimen, new_specimens)
-        write_specimens_to_cache(
-            cache_dir=cache_dir, request_response_pairs=created_specimens
+        error_path_spec = (errors_dir, lambda i: str(i.id)) if errors_dir else None
+        await _send_requests(
+            client.create_institution, new_institutions, log_errors, error_path_spec
         )
 
-    if settings.suspensions is not None:
-        suspension_csv = read_csv(settings.suspensions)
-        new_suspensions = await csv_to_new_suspensions(
-            client, suspension_csv, cache_dir=cache_dir
+    if people := settings.people:
+        data = read_csv(people)
+        new_people = await csv_to_new_people(client, data)
+        error_path_spec = (
+            (errors_dir, lambda pers: pers.email.replace("@", "at"))
+            if errors_dir
+            else None
         )
-        new_suspensions = new_suspensions  # A hack for ruff
+        await _send_requests(
+            client.create_person, new_people, log_errors, error_path_spec
+        )
+
+    if labs := settings.labs:
+        data = read_csv(labs)
+        new_labs = await csv_to_new_labs(
+            client,
+            data,
+        )
+        error_path_spec = (errors_dir, lambda lab: lab.name) if errors_dir else None
+        await _send_requests(client.create_lab, new_labs, log_errors, error_path_spec)
+
+    if specimens := settings.specimens:
+        data = read_csv(specimens)
+        new_specimens = await csv_to_new_specimens(client, data)
+        error_path_spec = (
+            (errors_dir, lambda spec: spec.inner.readable_id) if errors_dir else None
+        )
+        await _send_requests(
+            client.create_specimen, new_specimens, log_errors, error_path_spec
+        )
+
+    if specimen_measurements := settings.specimen_measurements:
+        data = read_csv(specimen_measurements)
+        specimen_updates = await csv_to_new_specimen_measurements(client, data)
+        error_path_spec = (
+            (errors_dir, lambda upd: upd.specimen_id) if errors_dir else None
+        )
+        await _send_requests(
+            client.update_specimen, specimen_updates, log_errors, error_path_spec
+        )
 
 
 class Settings(BaseSettings):
@@ -126,7 +144,6 @@ class Settings(BaseSettings):
     )
 
     config_path: Path = Path.home() / ".config" / POPULATE_SCAMPLERS / "settings.toml"
-    cache_dir: Path = Path.home() / ".cache" / POPULATE_SCAMPLERS
     api_base_url: str
     api_key: str
     accept_invalid_certificates: bool = False
@@ -146,8 +163,8 @@ class Settings(BaseSettings):
     dry_run: bool = False
     print_requests: bool = False
     save_requests: Path | None = None
-    print_responses: bool = False
-    save_responses: Path | None = None
+    log_errors: bool = True
+    errors_dir: Path | None = None
 
     @classmethod
     def settings_customise_sources(

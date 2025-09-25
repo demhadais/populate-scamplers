@@ -1,53 +1,35 @@
-from pathlib import Path
 from typing import Any
 from uuid import UUID
 from scamplepy import ScamplersClient
 from scamplepy.create import NewPerson
-from scamplepy.query import InstitutionQuery
-from scamplepy.responses import Person
+from scamplepy.query import InstitutionQuery, PersonQuery
 
-from read_write import read_from_cache, row_is_empty, write_to_cache
+from utils import property_id_map, row_is_empty
 
 
-def _parse_new_people(
-    data: list[dict[str, Any]],
-    institution_domains: dict[str, UUID],
-    already_inserted_people: list[NewPerson],
-) -> list[NewPerson]:
-    for row in data:
-        necessary_keys = {"name", "email"}
+def _parse_row(
+    row: dict[str, Any], institution_domains: dict[str, UUID]
+) -> NewPerson | None:
+    required_keys = {"name", "email"}
+    # This is required because of the Excel formula that creates a person's name
+    if row["name"] == " ":
+        row["name"] = None
 
-        if row_is_empty(row, necessary_keys):
-            continue
+    if row_is_empty(row, required_keys):
+        return None
 
-        if row.get("email_domain") is not None:
-            raise ValueError("'email_domain' should not be a field in people data")
+    data = {key: row[key] for key in required_keys}
 
-        row["email_domain"] = row["email"].split("@")[-1]
+    email_domain = row["email"].split("@")[-1]
+    data["institution_id"] = institution_domains[email_domain]
+    data["ms_user_id"] = UUID(row["ms_user_id"]) if row["ms_user_id"] else None
 
-    new_people = [
-        NewPerson(
-            name=row["name"],
-            institution_id=institution_domains[row["email_domain"]],
-            email=row["email"],
-            ms_user_id=UUID(row["ms_user_id"]) if row["ms_user_id"] else None,
-        )
-        for row in data
-        if row["email"]
-    ]
-
-    return [p for p in new_people if p not in already_inserted_people]
+    return NewPerson(**data)
 
 
 async def _email_domain_institution_map(client: ScamplersClient) -> dict[str, UUID]:
     institutions = await client.list_institutions(InstitutionQuery())
-    institution_names = {
-        institution.name: institution.id for institution in institutions
-    }
-
-    assert len(institutions) == len(institution_names), (
-        "institutions do not have unique names"
-    )
+    institution_names = property_id_map("name", "id", institutions)
 
     institution_domains = {
         "Banner MD Anderson Cancer Center": "mdanderson.org",
@@ -73,32 +55,18 @@ async def _email_domain_institution_map(client: ScamplersClient) -> dict[str, UU
 async def csv_to_new_people(
     client: ScamplersClient,
     data: list[dict[str, Any]],
-    cache_dir: Path,
 ) -> list[NewPerson]:
-    already_inserted_people = read_from_cache(
-        cache_dir,
-        "people",
-        NewPerson,
-    )
+    institution_domains = await _email_domain_institution_map(client)
+    new_people = (_parse_row(row, institution_domains) for row in data)
+    pre_existing_people = {
+        p.info.summary.email for p in await client.list_people(PersonQuery(limit=9_999))
+    }
+    pre_existing_people = pre_existing_people | {
+        email.lower() for email in pre_existing_people if email is not None
+    }
 
-    return _parse_new_people(
-        data,
-        institution_domains=await _email_domain_institution_map(client),
-        already_inserted_people=already_inserted_people,
-    )
+    new_people = [
+        p for p in new_people if not (p is None or p.email in pre_existing_people)
+    ]
 
-
-def write_people_to_cache(
-    cache_dir: Path,
-    request_response_pairs: list[tuple[NewPerson, Person]],
-):
-    for request, response in request_response_pairs:
-        if not request or not response:
-            continue
-
-        write_to_cache(
-            cache_dir,
-            subdir_name="people",
-            filename=f"{response.info.id_}.json",
-            data=request,
-        )
+    return new_people

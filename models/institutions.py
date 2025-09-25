@@ -1,52 +1,35 @@
-from pathlib import Path
 from typing import Any
-from uuid import UUID
 
+from scamplepy import ScamplersClient
 from scamplepy.create import NewInstitution
-from scamplepy.responses import Institution
+from scamplepy.query import InstitutionQuery
 
-from read_write import read_from_cache, write_to_cache
+from utils import row_is_empty
 
 
-def _parse_new_institutions(
-    data: list[dict[str, Any]],
-    already_inserted_institutions: list[NewInstitution],
-) -> list[NewInstitution]:
-    new_institutions = [
-        NewInstitution(id=UUID(row["id"]), name=row["name"]) for row in data
-    ]
+def _parse_row(row: dict[str, Any]) -> NewInstitution | None:
+    required_keys = {"id", "name"}
 
-    return [
-        inst for inst in new_institutions if inst not in already_inserted_institutions
-    ]
+    if row_is_empty(row, required_keys):
+        return None
+
+    data = {key: row[key] for key in required_keys}
+
+    return NewInstitution(**data)
 
 
 async def csv_to_new_institutions(
+    client: ScamplersClient,
     data: list[dict[str, Any]],
-    cache_dir: Path,
 ) -> list[NewInstitution]:
-    already_inserted_institutions = read_from_cache(
-        cache_dir,
-        "institutions",
-        NewInstitution,
-    )
-
-    new_institutions = _parse_new_institutions(
-        data,
-        already_inserted_institutions,
-    )
+    pre_existing_institutions = {
+        inst.id for inst in await client.list_institutions(InstitutionQuery())
+    }
+    new_institutions = (_parse_row(row) for row in data)
+    new_institutions = [
+        inst
+        for inst in new_institutions
+        if not (inst is None or inst.id in pre_existing_institutions)
+    ]
 
     return new_institutions
-
-
-def write_institutions_to_cache(
-    cache_dir: Path,
-    request_response_pairs: list[tuple[NewInstitution, Institution]],
-):
-    for request, response in request_response_pairs:
-        write_to_cache(
-            cache_dir,
-            subdir_name="institutions",
-            filename=f"{response.id}.json",
-            data=request,
-        )

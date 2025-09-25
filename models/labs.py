@@ -1,50 +1,38 @@
-from pathlib import Path
 from typing import Any
 from uuid import UUID
 from scamplepy import ScamplersClient
 from scamplepy.create import NewLab
-from scamplepy.query import PersonQuery
-from scamplepy.responses import Lab
+from scamplepy.query import LabQuery, PersonQuery
 
-from read_write import property_id_map, read_from_cache, write_to_cache
+from utils import property_id_map, row_is_empty
 
 
-def _parse_new_labs(
-    data: list[dict[str, Any]],
-    people: dict[str, UUID],
-    already_inserted_labs: list[NewLab],
-) -> list[NewLab]:
-    new_labs = [
-        NewLab(
-            name=row["name"],
-            pi_id=people[row["pi email"]],
-            delivery_dir=row["delivery directory"],
-        )
-        for row in data
-        if row["name"]
-    ]
+def _parse_row(row: dict[str, Any], people: dict[str, UUID]):
+    required_keys = {"name", "pi_email", "delivery_dir"}
 
-    return [lab for lab in new_labs if lab not in already_inserted_labs]
+    if row_is_empty(row, required_keys):
+        return None
+
+    data = {key: row[key] for key in required_keys - {"pi_email"}}
+    data["pi_id"] = people[row["pi_email"]]
+
+    return NewLab(**data)
 
 
 async def csv_to_new_labs(
-    client: ScamplersClient, data: list[dict[str, Any]], cache_dir: Path
+    client: ScamplersClient, data: list[dict[str, Any]]
 ) -> list[NewLab]:
-    already_inserted_labs = read_from_cache(cache_dir, "labs", NewLab)
-
     people = await client.list_people(PersonQuery())
     people = property_id_map("info.summary.email", "info.id_", people)
+    people = people | {email.lower(): people[email] for email in people}
 
-    return _parse_new_labs(data, people, already_inserted_labs)
+    new_labs = (_parse_row(row, people) for row in data)
+    pre_existing_labs = {
+        lab.info.summary.name for lab in await client.list_labs(LabQuery(limit=9_999))
+    }
 
+    new_labs = [
+        lab for lab in new_labs if not (lab is None or lab.name in pre_existing_labs)
+    ]
 
-def write_labs_to_cache(
-    cache_dir: Path, request_response_pairs: list[tuple[NewLab, Lab]]
-):
-    for request, response in request_response_pairs:
-        write_to_cache(
-            cache_dir,
-            subdir_name="labs",
-            filename=f"{response.info.id_}.json",
-            data=request,
-        )
+    return new_labs

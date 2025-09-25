@@ -1,8 +1,9 @@
 import csv
 from collections.abc import Iterable
 import datetime
+import logging
 from pathlib import Path
-from typing import Any, Protocol, Self, TypeVar
+from typing import Any
 from uuid import UUID
 
 from pydantic.main import BaseModel
@@ -55,6 +56,7 @@ def _rename_csv_fields(
         {
             field_renaming.get(field, to_snake_case(field)): value
             for field, value in row.items()
+            if field is not None
         }
         for row in csv
     ]
@@ -81,48 +83,17 @@ def read_csv(spec: CsvSpec) -> list[dict[str, Any]]:
         return _rename_csv_fields(data, spec.field_renaming)
 
 
-def row_is_empty(row: dict[str, Any], necessary_keys: set[str]) -> bool:
-    is_empty = all(row[key] is None for key in necessary_keys)
+def row_is_empty(row: dict[str, Any], required_keys: set[str]) -> bool:
+    is_empty = all(row[key] is None for key in required_keys)
     if is_empty:
         return True
 
-    is_partially_empty = any(row[key] is None for key in necessary_keys)
+    is_partially_empty = any(row[key] is None for key in required_keys)
+
     if is_partially_empty:
-        raise ValueError("partially empty row")
+        logging.warning(
+            f"skipping partially empty row (required keys: {required_keys}):\n {row}"
+        )
+        return True
 
     return False
-
-
-class _ScamplersModel(Protocol):
-    def to_json_string(self) -> str: ...
-
-    @classmethod
-    def from_json_string(cls, json_str: str) -> Self: ...
-
-
-T = TypeVar("T", bound=_ScamplersModel)
-
-
-def read_from_cache(cache_dir: Path, subdir_name: str, model: type[T]) -> list[T]:
-    subdir = cache_dir / subdir_name
-    subdir.mkdir(parents=True, exist_ok=True)
-
-    return [model.from_json_string(p.read_text()) for p in subdir.iterdir()]
-
-
-_T1 = TypeVar("_T1")
-_T2 = TypeVar("_T2")
-
-
-def write_to_cache(
-    cache_dir: Path, subdir_name: str, filename: str, data: _ScamplersModel
-):
-    subdir = cache_dir / subdir_name
-    subdir.mkdir(parents=True, exist_ok=True)
-
-    path = subdir / filename
-
-    if path.exists():
-        raise FileExistsError(f"cannot overwrite cached data at {path}")
-
-    path.write_text(data.to_json_string())
