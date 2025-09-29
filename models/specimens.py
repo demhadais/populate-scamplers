@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Generator
 from typing import Any
 from uuid import UUID
 
@@ -19,13 +20,12 @@ from scamplepy.create import (
     NewFixedOrFreshSuspension,
     NewFrozenSuspension,
 )
-from scamplepy.query import LabQuery, PersonQuery, SpecimenQuery
+from scamplepy.query import SpecimenQuery
 
 from utils import (
     date_str_to_eastcoast_9am,
     get_lab_name_id_map,
     get_person_email_id_map,
-    property_id_map,
     row_is_empty,
     to_snake_case,
 )
@@ -134,7 +134,10 @@ def _parse_row(
             return NewCryopreservedSuspension(**data)
         case ("Cell Suspension" | "Nucleus Suspension", None):
             return NewFixedOrFreshSuspension(**data)
-        case ("Cell Suspension" | "Nucleus Suspension", "Frozen"):
+        case (
+            "Cell Suspension" | "Nucleus Suspension" | "Cell Pellet" | "Nucleus Pellet",
+            "Frozen",
+        ):
             return NewFrozenSuspension(**data)
         case ("Cell Suspension" | "Nucleus Suspension", preservation):
             fixatives = {
@@ -152,7 +155,7 @@ def _parse_row(
 
 async def csv_to_new_specimens(
     client: ScamplersClient, data: list[dict[str, Any]]
-) -> list[NewSpecimen]:
+) -> Generator[NewSpecimen]:
     async with asyncio.TaskGroup() as tg:
         people = tg.create_task(get_person_email_id_map(client))
         labs = tg.create_task(get_lab_name_id_map(client))
@@ -166,10 +169,10 @@ async def csv_to_new_specimens(
         for s in await client.list_specimens(SpecimenQuery(limit=99_999))
     }
 
-    new_specimens = [
+    new_specimens = (
         spec
         for spec in new_specimens
         if not (spec is None or spec.inner.readable_id in pre_existing_specimens)
-    ]
+    )
 
     return new_specimens

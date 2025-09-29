@@ -1,3 +1,4 @@
+from collections.abc import Generator
 from typing import Any
 from uuid import UUID
 from scamplepy import ScamplersClient
@@ -55,7 +56,7 @@ async def _email_domain_institution_map(client: ScamplersClient) -> dict[str, UU
 async def csv_to_new_people(
     client: ScamplersClient,
     data: list[dict[str, Any]],
-) -> list[NewPerson]:
+) -> Generator[NewPerson]:
     institution_domains = await _email_domain_institution_map(client)
     new_people = (_parse_row(row, institution_domains) for row in data)
     pre_existing_people = {
@@ -65,8 +66,8 @@ async def csv_to_new_people(
         email.lower() for email in pre_existing_people if email is not None
     }
 
-    new_people = [
+    new_people = (
         p for p in new_people if not (p is None or p.email in pre_existing_people)
-    ]
+    )
 
     return new_people

@@ -1,9 +1,8 @@
 import asyncio
 from datetime import datetime
 import logging
-from pathlib import Path
 from typing import Any
-from collections.abc import Generator, Iterable
+from collections.abc import Generator
 from uuid import UUID
 from scamplepy import ScamplersClient
 from scamplepy.common import (
@@ -13,7 +12,8 @@ from scamplepy.common import (
     VolumeUnit,
 )
 from scamplepy.create import NewSuspension, NewSuspensionMeasurement
-from scamplepy.query import PersonQuery, SpecimenQuery, SuspensionQuery
+from scamplepy.common import LengthUnit
+from scamplepy.query import SpecimenQuery, SuspensionQuery
 from scamplepy.responses import Specimen
 
 from utils import (
@@ -42,9 +42,19 @@ def _parse_concentration(
     else:
         parsed_counting_method = None
 
-    unit = (BiologicalMaterial(to_snake_case(row["biological_material"])), VolumeUnit.Millliter)
+    unit = (
+        BiologicalMaterial(to_snake_case(row["biological_material"])),
+        VolumeUnit.Millliter,
+    )
 
-    return SuspensionMeasurementFields.Concentration(measured_at=measured_at, instrument_name=instrument_name, counting_method=parsed_counting_method, unit=unit, value=value)
+    return SuspensionMeasurementFields.Concentration(
+        measured_at=measured_at,
+        instrument_name=instrument_name,
+        counting_method=parsed_counting_method,
+        unit=unit,
+        value=value,
+    )
+
 
 def _parse_volume(
     row: dict[str, Any],
@@ -56,7 +66,45 @@ def _parse_volume(
     else:
         return None
 
-    return SuspensionMeasurementFields.Volume(measured_at=measured_at, unit=VolumeUnit.Microliter, value=value)
+    return SuspensionMeasurementFields.Volume(
+        measured_at=measured_at, unit=VolumeUnit.Microliter, value=value
+    )
+
+
+def _parse_viability(
+    row: dict[str, Any],
+    value_key: str,
+    instrument_name: str | None,
+    measured_at: datetime,
+) -> SuspensionMeasurementFields.Viability | None:
+    if value := row[value_key]:
+        # Divide by 100 because these values are formatted in a reasonable way (without the percent-sign) so they won't automatically be converted to a decimal inside str_to_float
+        value = str_to_float(value) / 100
+    else:
+        return None
+
+    return SuspensionMeasurementFields.Viability(
+        measured_at=measured_at, instrument_name=instrument_name, value=value
+    )
+
+
+def _parse_cell_or_nucleus_size(
+    row: dict[str, Any],
+    value_key: str,
+    instrument_name: str | None,
+    measured_at: datetime,
+) -> SuspensionMeasurementFields.MeanDiameter | None:
+    if value := row[value_key]:
+        value = str_to_float(value)
+    else:
+        return None
+
+    biological_material = BiologicalMaterial(to_snake_case(row["biological_material"]))
+    unit = (biological_material, LengthUnit.Micrometer)
+
+    return SuspensionMeasurementFields.MeanDiameter(
+        measured_at=measured_at, instrument_name=instrument_name, unit=unit, value=value
+    )
 
 
 def _parse_suspension_row(
@@ -66,26 +114,42 @@ def _parse_suspension_row(
     multiplexing_tags: dict[str, UUID],
     for_pool: bool,
 ) -> NewSuspension | None:
+    if row["readable_id"] == "0":
+        return None
+
     required_keys = {
+        "readable_id",
         "parent_specimen_readable_id",
         "biological_material",
         "preparer_1_email",
+        "target_cell_recovery",
     }
     is_empty = row_is_empty(row, required_keys)
 
     if is_empty:
         return None
 
-    data = {}
-    parent_specimen = specimens[row["parent_specimen_readable_id"]]
+    data = {key: row[key] for key in ["readable_id"]}
 
-    data["parent_specimen_id"] = parent_specimen
+    # Before everything, check the multiplexing tag and `for_pool` to determine whether to actually parse this row
+    if multiplexing_tag_id := row["multiplexing_tag_id"]:
+        if for_pool:
+            data["multiplexing_tag_id"] = multiplexing_tags[multiplexing_tag_id]
+        else:
+            return None
+
+    try:
+        parent_specimen = specimens[row["parent_specimen_readable_id"]]
+    except KeyError:
+        logging.warning(
+            f"skipping {row['readable_id']}: parent specimen {row['parent_specimen_readable_id']} not found"
+        )
+        return None
+
+    data["parent_specimen_id"] = parent_specimen.info.id_
 
     if date_created := row["date_created"]:
         row["created_at"] = date_str_to_eastcoast_9am(date_created)
-
-    if multiplexing_tag_id := row["multiplexing_tag_id"]:
-        data["multiplexing_tag_id"] = multiplexing_tags[multiplexing_tag_id]
 
     data["biological_material"] = BiologicalMaterial(
         to_snake_case(row["biological_material"])
@@ -109,6 +173,7 @@ def _parse_suspension_row(
 
     data["measurements"] = []
 
+    cell_counter = row["cell_counter"]
     if date_created := row["date_created"]:
         measured_at = date_str_to_eastcoast_9am(date_created)
     else:
@@ -123,35 +188,50 @@ def _parse_suspension_row(
             None,
             None,
             measured_by_for_customer_measurement,
-            False
+            False,
         ),
         (
             "scbl_cell/nucleus_concentration_(cell-nucleus/ml)",
-            row["instrument_name"],
+            cell_counter,
             row["counting_method"],
             measured_by_for_scbl_measurement,
-            False
+            False,
         ),
         (
             "scbl_cell/nucleus_concentration_(post-adjustment)_(cell-nucleus/ml)",
-            row["instrument_name"],
+            cell_counter,
             row["counting_method"],
             measured_by_for_scbl_measurement,
-            False
+            False,
         ),
         (
             "post-hybridization_cell/nucleus_concentration_(cell-nucleus/ml)",
-            row["instrument_name"],
+            cell_counter,
             row["counting_method"],
             measured_by_for_scbl_measurement,
-            True
+            True,
         ),
     ]
-    for key, instrument_name, counting_method, measured_by, is_post_hybridization in concentrations:
-        if measurement_data := _parse_concentration(row, value_key=key, instrument_name=instrument_name, counting_method=counting_method, measured_at=measured_at)
-            measurement = NewSuspensionMeasurement(measured_by=measured_by, data=measurement_data, is_post_hybridization=is_post_hybridization)
+    for (
+        key,
+        instrument_name,
+        counting_method,
+        measured_by,
+        is_post_hybridization,
+    ) in concentrations:
+        if measurement_data := _parse_concentration(
+            row,
+            value_key=key,
+            instrument_name=instrument_name,
+            counting_method=counting_method,
+            measured_at=measured_at,
+        ):
+            measurement = NewSuspensionMeasurement(
+                measured_by=measured_by,
+                data=measurement_data,
+                is_post_hybridization=is_post_hybridization,
+            )
             data["measurements"].append(measurement)
-
 
     volumes = [
         (
@@ -160,55 +240,87 @@ def _parse_suspension_row(
             False,
         ),
         ("scbl_volume_(µl)", measured_by_for_scbl_measurement, False),
-        (
-            "scbl_volume_(post-adjustment)_(µl)",
-            measured_by_for_scbl_measurement,
-            False
-        ),
+        ("scbl_volume_(post-adjustment)_(µl)", measured_by_for_scbl_measurement, False),
         (
             "post-hybridization_volume_(µl)",
             measured_by_for_scbl_measurement,
             True,
         ),
     ]
-
-
+    for key, measured_by, is_post_hybridization in volumes:
+        if measurement_data := _parse_volume(
+            row, value_key=key, measured_at=measured_at
+        ):
+            measurement = NewSuspensionMeasurement(
+                measured_by=measured_by,
+                data=measurement_data,
+                is_post_hybridization=is_post_hybridization,
+            )
+            data["measurements"].append(measurement)
 
     viabilities = [
-        ("customer_cell_viability_(%)", customer_id, False, customer_measured_at),
-        ("scbl_cell_viability_(%)", first_preparer, False, scbl_measured_at),
+        (
+            "customer_cell_viability_(%)",
+            None,
+            measured_by_for_customer_measurement,
+            False,
+        ),
+        (
+            "scbl_cell_viability_(%)",
+            cell_counter,
+            measured_by_for_scbl_measurement,
+            False,
+        ),
         (
             "scbl_cell_viability_(post-adjustment)_(%)",
-            first_preparer,
+            cell_counter,
+            measured_by_for_scbl_measurement,
             False,
-            scbl_measured_at,
         ),
     ]
-    for key, measured_by, is_post_hybridization, measured_at in viabilities:
-        measurement = NewSuspensionMeasurement(
-            measured_by=measured_by,
-            is_post_hybridization=is_post_hybdridization,
-            data=SuspensionMeasurementFields.Viability(
-                measured_at=measured_at,
-                value=str_to_float(row[key]),
-                instrument_name="unknown",
-            ),
-        )
+    for key, instrument_name, measured_by, is_post_hybridization in viabilities:
+        if measurement_data := _parse_viability(
+            row, value_key=key, instrument_name=instrument_name, measured_at=measured_at
+        ):
+            measurement = NewSuspensionMeasurement(
+                measured_by=measured_by,
+                data=measurement_data,
+                is_post_hybridization=is_post_hybridization,
+            )
+            data["measurements"].append(measurement)
 
-    keys = {
-        "readable_id",
-        "parent_specimen_id",
-        "created_at",
-        "multiplexing_tag_id",
-        "biological_material",
-        "preparer_ids",
-        "target_cell_recovery",
-        "lysis_duration_minutes",
-        "measurements",
-        "notes",
-    }
+    diameters = [
+        (
+            "scbl_average_cell/nucleus_diameter_(µm)",
+            cell_counter,
+            measured_by_for_scbl_measurement,
+            False,
+        ),
+        (
+            "scbl_average_cell/nucleus_diameter_(post-adjustment)_(µm)",
+            cell_counter,
+            measured_by_for_scbl_measurement,
+            False,
+        ),
+        (
+            "scbl_post-hybridization_average_cell/nucleus_diameter_(µm)",
+            cell_counter,
+            measured_by_for_scbl_measurement,
+            True,
+        ),
+    ]
+    for key, instrument_name, measured_by, is_post_hybridization in diameters:
+        if measurement_data := _parse_cell_or_nucleus_size(
+            row, value_key=key, instrument_name=instrument_name, measured_at=measured_at
+        ):
+            measurement = NewSuspensionMeasurement(
+                measured_by=measured_by,
+                data=measurement_data,
+                is_post_hybridization=is_post_hybridization,
+            )
+            data["measurements"].append(measurement)
 
-    return NewSuspension(**{key: val for key, val in row.items() if key in keys})
+    return NewSuspension(**data)
 
 
 async def csv_to_new_suspensions(
@@ -229,6 +341,9 @@ async def csv_to_new_suspensions(
         task.result() for task in tasks
     ]
     specimens = {s.info.summary.readable_id: s for s in specimens}
+    pre_existing_suspensions = {
+        s.info.summary.readable_id for s in pre_existing_suspensions
+    }
 
     new_suspensions = (
         _parse_suspension_row(

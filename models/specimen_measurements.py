@@ -1,3 +1,4 @@
+from collections.abc import Generator
 from typing import Any
 from scamplepy import ScamplersClient
 from scamplepy.create import NewSpecimenMeasurement, SpecimenMeasurementData
@@ -13,7 +14,7 @@ from utils import (
 )
 
 
-def _parse_specimen_measurment_row(
+def _parse_specimen_measurement_row(
     row: dict[str, Any], people: dict[str, Any], specimens: dict[str, Specimen]
 ) -> SpecimenUpdateCommon | None:
     required_keys = {"specimen_readable_id", "measured_by"}
@@ -60,7 +61,7 @@ def _parse_specimen_measurment_row(
 
 async def csv_to_new_specimen_measurements(
     client: ScamplersClient, data: list[dict[str, Any]]
-) -> list[SpecimenUpdateCommon]:
+) -> Generator[SpecimenUpdateCommon]:
     # In theory, it's be nice to get only the specimens we need by feeding in the sreadable_id`s, but this isn't supported by scamplers at the time of writing
     specimens = await client.list_specimens(SpecimenQuery(limit=99_999))
     specimen_id_map = {spec.info.summary.readable_id: spec for spec in specimens}
@@ -72,7 +73,7 @@ async def csv_to_new_specimen_measurements(
     people = property_id_map("info.summary.email", "info.id_", people)
 
     updated = (
-        _parse_specimen_measurment_row(row, people=people, specimens=specimen_id_map)
+        _parse_specimen_measurement_row(row, people=people, specimens=specimen_id_map)
         for row in data
     )
-    return [upd for upd in updated if upd is not None]
+    return (upd for upd in updated if upd is not None)

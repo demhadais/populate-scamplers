@@ -21,6 +21,7 @@ from models.labs import csv_to_new_labs
 from models.people import csv_to_new_people
 from models.specimen_measurements import csv_to_new_specimen_measurements
 from models.specimens import csv_to_new_specimens
+from models.suspensions import csv_to_new_suspensions
 from utils import CsvSpec, read_csv
 
 POPULATE_SCAMPLERS = "populate-scamplers"
@@ -34,10 +35,10 @@ async def _catch_exception(
 ) -> _Ret | None:
     try:
         return await coro
-    except ScamplersErrorResponse as e:
+    except Exception as e:
         if log_error:
             logging.error(e)
-        if error_path is not None:
+        if error_path is not None and isinstance(e, ScamplersErrorResponse):
             infix = 0
             while error_path.exists():
                 error_path = error_path.with_name(
@@ -63,7 +64,9 @@ async def _send_requests(
             error_path = None
             if error_path_spec is not None:
                 error_dir, error_path_creator = error_path_spec
-                error_path = (error_dir / error_path_creator(d)).with_suffix(".json")
+                error_path = (error_dir / str(error_path_creator(d))).with_suffix(
+                    ".json"
+                )
 
             coroutine_with_caught_exception = _catch_exception(
                 coroutine, log_errors, error_path
@@ -129,11 +132,19 @@ async def _update_scamples_api(settings: "Settings"):
     if specimen_measurements := settings.specimen_measurements:
         data = read_csv(specimen_measurements)
         specimen_updates = await csv_to_new_specimen_measurements(client, data)
-        error_path_spec = (
-            (errors_dir, lambda upd: upd.specimen_id) if errors_dir else None
-        )
+        error_path_spec = (errors_dir, lambda upd: upd.id) if errors_dir else None
         await _send_requests(
             client.update_specimen, specimen_updates, log_errors, error_path_spec
+        )
+
+    if suspensions := settings.suspensions:
+        data = read_csv(suspensions)
+        new_suspensions = await csv_to_new_suspensions(client, data)
+        error_path_spec = (
+            (errors_dir, lambda susp: susp.readable_id) if errors_dir else None
+        )
+        await _send_requests(
+            client.create_suspension, new_suspensions, log_errors, error_path_spec
         )
 
 
