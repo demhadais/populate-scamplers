@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any
 from uuid import UUID
 
@@ -21,7 +22,9 @@ from scamplepy.create import (
 from scamplepy.query import LabQuery, PersonQuery, SpecimenQuery
 
 from utils import (
-    eastcoast_9am_from_date_str,
+    date_str_to_eastcoast_9am,
+    get_lab_name_id_map,
+    get_person_email_id_map,
     property_id_map,
     row_is_empty,
     to_snake_case,
@@ -65,7 +68,7 @@ def _parse_row(
 
     data["submitted_by"] = people[row["submitter_email"].lower()]
 
-    data["received_at"] = eastcoast_9am_from_date_str(row["date_received"])
+    data["received_at"] = date_str_to_eastcoast_9am(row["date_received"])
 
     data["returned_by"] = None
 
@@ -73,7 +76,7 @@ def _parse_row(
         data["returned_by"] = people[row["returner_email"]]
 
     if row["date_returned"]:
-        data["returned_at"] = eastcoast_9am_from_date_str(row["date_returned"])
+        data["returned_at"] = date_str_to_eastcoast_9am(row["date_returned"])
 
     if row["species"] == "Homo sapiens + Mus musculus (PDX)":
         data["species"] = [Species.HomoSapiens, Species.MusMusculus]
@@ -150,12 +153,12 @@ def _parse_row(
 async def csv_to_new_specimens(
     client: ScamplersClient, data: list[dict[str, Any]]
 ) -> list[NewSpecimen]:
-    labs = await client.list_labs(LabQuery())
-    labs = property_id_map("info.summary.name", "info.id_", labs)
+    async with asyncio.TaskGroup() as tg:
+        people = tg.create_task(get_person_email_id_map(client))
+        labs = tg.create_task(get_lab_name_id_map(client))
 
-    people = await client.list_people(PersonQuery())
-    people = property_id_map("info.summary.email", "info.id_", people)
-    people = people | {k.lower(): v for k, v in people.items()}
+    people = people.result()
+    labs = labs.result()
 
     new_specimens = (_parse_row(row, labs=labs, people=people) for row in data)
     pre_existing_specimens = {
@@ -164,9 +167,9 @@ async def csv_to_new_specimens(
     }
 
     new_specimens = [
-        s
-        for s in new_specimens
-        if not (s is None or s.inner.readable_id in pre_existing_specimens)
+        spec
+        for spec in new_specimens
+        if not (spec is None or spec.inner.readable_id in pre_existing_specimens)
     ]
 
     return new_specimens

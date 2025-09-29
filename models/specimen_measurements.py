@@ -6,7 +6,7 @@ from scamplepy.responses import Specimen
 from scamplepy.update import SpecimenUpdateCommon
 
 from utils import (
-    eastcoast_9am_from_date_str,
+    date_str_to_eastcoast_9am,
     property_id_map,
     row_is_empty,
     str_to_float,
@@ -28,7 +28,7 @@ def _parse_specimen_measurment_row(
     measured_by = people[row["measured_by"]]
     measurement_data = {key: row[key] for key in ["instrument_name"]}
     measurement_data["measured_at"] = (
-        eastcoast_9am_from_date_str(row["date_measured"])
+        date_str_to_eastcoast_9am(row["date_measured"])
         if row["date_measured"]
         else specimen.info.summary.received_at
     )
