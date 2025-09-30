@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime
 import logging
 from typing import Any
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from uuid import UUID
 from scamplepy import ScamplersClient
 from scamplepy.common import (
@@ -14,7 +14,7 @@ from scamplepy.common import (
 from scamplepy.create import NewSuspension, NewSuspensionMeasurement
 from scamplepy.common import LengthUnit
 from scamplepy.query import SpecimenQuery, SuspensionQuery
-from scamplepy.responses import Specimen
+from scamplepy.responses import MultiplexingTag, Specimen, Suspension
 
 from utils import (
     date_str_to_eastcoast_9am,
@@ -31,6 +31,7 @@ def _parse_concentration(
     instrument_name: str | None,
     counting_method: str | None,
     measured_at: datetime,
+    biological_material: BiologicalMaterial | None = None,
 ) -> SuspensionMeasurementFields.Concentration | None:
     if value := row[value_key]:
         value = str_to_float(value)
@@ -42,10 +43,12 @@ def _parse_concentration(
     else:
         parsed_counting_method = None
 
-    unit = (
-        BiologicalMaterial(to_snake_case(row["biological_material"])),
-        VolumeUnit.Millliter,
-    )
+    if biological_material is None:
+        biological_material = BiologicalMaterial(
+            to_snake_case(row["biological_material"])
+        )
+
+    unit = (biological_material, VolumeUnit.Millliter)
 
     return SuspensionMeasurementFields.Concentration(
         measured_at=measured_at,
@@ -88,7 +91,7 @@ def _parse_viability(
     )
 
 
-def _parse_cell_or_nucleus_size(
+def _parse_cell_or_nucleus_diameter(
     row: dict[str, Any],
     value_key: str,
     instrument_name: str | None,
@@ -132,11 +135,11 @@ def _parse_suspension_row(
     data = {key: row[key] for key in ["readable_id"]}
 
     # Before everything, check the multiplexing tag and `for_pool` to determine whether to actually parse this row
-    if multiplexing_tag_id := row["multiplexing_tag_id"]:
-        if for_pool:
-            data["multiplexing_tag_id"] = multiplexing_tags[multiplexing_tag_id]
-        else:
-            return None
+    multiplexing_tag_id = row["multiplexing_tag_id"]
+    if (multiplexing_tag_id is None) == for_pool:
+        data["multiplexing_tag_id"] = multiplexing_tag_id
+    else:
+        return None
 
     try:
         parent_specimen = specimens[row["parent_specimen_readable_id"]]
@@ -310,7 +313,7 @@ def _parse_suspension_row(
         ),
     ]
     for key, instrument_name, measured_by, is_post_hybridization in diameters:
-        if measurement_data := _parse_cell_or_nucleus_size(
+        if measurement_data := _parse_cell_or_nucleus_diameter(
             row, value_key=key, instrument_name=instrument_name, measured_at=measured_at
         ):
             measurement = NewSuspensionMeasurement(
@@ -324,7 +327,7 @@ def _parse_suspension_row(
 
 
 async def csv_to_new_suspensions(
-    client: ScamplersClient, data: list[dict[str, Any]]
+    client: ScamplersClient, data: list[dict[str, Any]], for_pool: bool
 ) -> Generator[NewSuspension]:
     async with asyncio.TaskGroup() as tg:
         tasks = [
@@ -340,17 +343,18 @@ async def csv_to_new_suspensions(
     people, specimens, pre_existing_suspensions, multiplexing_tags = [
         task.result() for task in tasks
     ]
-    specimens = {s.info.summary.readable_id: s for s in specimens}
+    specimens = {s.info.summary.readable_id: s for s in specimens}  # pyright: ignore[reportAttributeAccessIssue]
     pre_existing_suspensions = {
-        s.info.summary.readable_id for s in pre_existing_suspensions
+        s.info.summary.readable_id
+        for s in pre_existing_suspensions  # pyright: ignore[reportAttributeAccessIssue]
     }
 
     new_suspensions = (
         _parse_suspension_row(
             row,
-            specimens=specimens,
-            people=people,
-            multiplexing_tags=multiplexing_tags,
+            specimens=specimens,  # pyright: ignore[reportArgumentType]
+            people=people,  # pyright: ignore[reportArgumentType]
+            multiplexing_tags=multiplexing_tags,  # pyright: ignore[reportArgumentType]
             for_pool=False,
         )
         for row in data

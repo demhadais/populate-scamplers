@@ -21,6 +21,7 @@ from models.labs import csv_to_new_labs
 from models.people import csv_to_new_people
 from models.specimen_measurements import csv_to_new_specimen_measurements
 from models.specimens import csv_to_new_specimens
+from models.suspension_pools import csvs_to_new_suspension_pools
 from models.suspensions import csv_to_new_suspensions
 from utils import CsvSpec, read_csv
 
@@ -139,12 +140,32 @@ async def _update_scamples_api(settings: "Settings"):
 
     if suspensions := settings.suspensions:
         data = read_csv(suspensions)
-        new_suspensions = await csv_to_new_suspensions(client, data)
+        new_suspensions = await csv_to_new_suspensions(client, data, for_pool=False)
         error_path_spec = (
             (errors_dir, lambda susp: susp.readable_id) if errors_dir else None
         )
         await _send_requests(
             client.create_suspension, new_suspensions, log_errors, error_path_spec
+        )
+
+    if settings.suspension_pools and settings.suspensions is None:
+        raise ValueError("cannot specify suspension pools without suspensions")
+    elif (suspension_pools := settings.suspension_pools) and (
+        suspensions := settings.suspensions
+    ):
+        suspension_pool_csv = read_csv(suspension_pools)
+        suspensions_csv = read_csv(suspensions)
+        new_suspension_pools = await csvs_to_new_suspension_pools(
+            client, suspension_pool_csv, suspensions_csv
+        )
+        error_path_spec = (
+            (errors_dir, lambda pool: pool.readable_id) if errors_dir else None
+        )
+        await _send_requests(
+            client.create_suspension_pool,
+            new_suspension_pools,
+            log_errors,
+            error_path_spec,
         )
 
 
