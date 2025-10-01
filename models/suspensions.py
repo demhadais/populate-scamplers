@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime
 import logging
 from typing import Any
-from collections.abc import Generator, Mapping
+from collections.abc import Generator
 from uuid import UUID
 from scamplepy import ScamplersClient
 from scamplepy.common import (
@@ -14,7 +14,7 @@ from scamplepy.common import (
 from scamplepy.create import NewSuspension, NewSuspensionMeasurement
 from scamplepy.common import LengthUnit
 from scamplepy.query import SpecimenQuery, SuspensionQuery
-from scamplepy.responses import MultiplexingTag, Specimen, Suspension
+from scamplepy.responses import Specimen
 
 from utils import (
     date_str_to_eastcoast_9am,
@@ -28,10 +28,10 @@ from utils import (
 def _parse_concentration(
     row: dict[str, Any],
     value_key: str,
-    instrument_name: str | None,
-    counting_method: str | None,
     measured_at: datetime,
     biological_material: BiologicalMaterial | None = None,
+    instrument_name: str | None = None,
+    counting_method: str | None = None,
 ) -> SuspensionMeasurementFields.Concentration | None:
     if value := row[value_key]:
         value = str_to_float(value)
@@ -77,8 +77,8 @@ def _parse_volume(
 def _parse_viability(
     row: dict[str, Any],
     value_key: str,
-    instrument_name: str | None,
     measured_at: datetime,
+    instrument_name: str | None = None,
 ) -> SuspensionMeasurementFields.Viability | None:
     if value := row[value_key]:
         # Divide by 100 because these values are formatted in a reasonable way (without the percent-sign) so they won't automatically be converted to a decimal inside str_to_float
@@ -94,8 +94,8 @@ def _parse_viability(
 def _parse_cell_or_nucleus_diameter(
     row: dict[str, Any],
     value_key: str,
-    instrument_name: str | None,
     measured_at: datetime,
+    instrument_name: str | None = None,
 ) -> SuspensionMeasurementFields.MeanDiameter | None:
     if value := row[value_key]:
         value = str_to_float(value)
@@ -108,6 +108,18 @@ def _parse_cell_or_nucleus_diameter(
     return SuspensionMeasurementFields.MeanDiameter(
         measured_at=measured_at, instrument_name=instrument_name, unit=unit, value=value
     )
+
+
+def _row_is_ocm(row: dict[str, Any]):
+    multiplexing_tag_id = row["multiplexing_tag_id"]
+    has_multiplexing_tag_id = multiplexing_tag_id is not None
+
+    if not has_multiplexing_tag_id:
+        return False
+    elif multiplexing_tag_id.lower() not in ["ob1", "ob2", "ob3", "ob4"]:
+        return False
+    else:
+        return True
 
 
 def _parse_suspension_row(
@@ -134,12 +146,20 @@ def _parse_suspension_row(
 
     data = {key: row[key] for key in ["readable_id"]}
 
-    # Before everything, check the multiplexing tag and `for_pool` to determine whether to actually parse this row
+    # Before everything, check `for_pool` and `pooled_into_id` to determine whether to actually parse this row
+    has_pooled_into_id = row["pooled_into_id"] is not None
     multiplexing_tag_id = row["multiplexing_tag_id"]
-    if (multiplexing_tag_id is None) == for_pool:
-        data["multiplexing_tag_id"] = multiplexing_tag_id
-    else:
+
+    is_ocm = _row_is_ocm(row)
+
+    if for_pool and is_ocm:
         return None
+    elif for_pool and has_pooled_into_id:
+        data["multiplexing_tag_id"] = multiplexing_tags.get(multiplexing_tag_id)
+    elif for_pool and not has_pooled_into_id:
+        return None
+    elif is_ocm:
+        data["multiplexing_tag_id"] = multiplexing_tags.get(multiplexing_tag_id)
 
     try:
         parent_specimen = specimens[row["parent_specimen_readable_id"]]
@@ -220,7 +240,7 @@ def _parse_suspension_row(
         instrument_name,
         counting_method,
         measured_by,
-        is_post_hybridization,
+        is_post_probe_hybridization,
     ) in concentrations:
         if measurement_data := _parse_concentration(
             row,
@@ -232,7 +252,7 @@ def _parse_suspension_row(
             measurement = NewSuspensionMeasurement(
                 measured_by=measured_by,
                 data=measurement_data,
-                is_post_hybridization=is_post_hybridization,
+                is_post_probe_hybridization=is_post_probe_hybridization,
             )
             data["measurements"].append(measurement)
 
@@ -250,14 +270,14 @@ def _parse_suspension_row(
             True,
         ),
     ]
-    for key, measured_by, is_post_hybridization in volumes:
+    for key, measured_by, is_post_probe_hybridization in volumes:
         if measurement_data := _parse_volume(
             row, value_key=key, measured_at=measured_at
         ):
             measurement = NewSuspensionMeasurement(
                 measured_by=measured_by,
                 data=measurement_data,
-                is_post_hybridization=is_post_hybridization,
+                is_post_probe_hybridization=is_post_probe_hybridization,
             )
             data["measurements"].append(measurement)
 
@@ -281,14 +301,14 @@ def _parse_suspension_row(
             False,
         ),
     ]
-    for key, instrument_name, measured_by, is_post_hybridization in viabilities:
+    for key, instrument_name, measured_by, is_post_probe_hybridization in viabilities:
         if measurement_data := _parse_viability(
             row, value_key=key, instrument_name=instrument_name, measured_at=measured_at
         ):
             measurement = NewSuspensionMeasurement(
                 measured_by=measured_by,
                 data=measurement_data,
-                is_post_hybridization=is_post_hybridization,
+                is_post_probe_hybridization=is_post_probe_hybridization,
             )
             data["measurements"].append(measurement)
 
@@ -312,14 +332,14 @@ def _parse_suspension_row(
             True,
         ),
     ]
-    for key, instrument_name, measured_by, is_post_hybridization in diameters:
+    for key, instrument_name, measured_by, is_post_probe_hybridization in diameters:
         if measurement_data := _parse_cell_or_nucleus_diameter(
             row, value_key=key, instrument_name=instrument_name, measured_at=measured_at
         ):
             measurement = NewSuspensionMeasurement(
                 measured_by=measured_by,
                 data=measurement_data,
-                is_post_hybridization=is_post_hybridization,
+                is_post_probe_hybridization=is_post_probe_hybridization,
             )
             data["measurements"].append(measurement)
 
@@ -345,17 +365,18 @@ async def csv_to_new_suspensions(
     ]
     specimens = {s.info.summary.readable_id: s for s in specimens}  # pyright: ignore[reportAttributeAccessIssue]
     pre_existing_suspensions = {
-        s.info.summary.readable_id
-        for s in pre_existing_suspensions  # pyright: ignore[reportAttributeAccessIssue]
+        s.info.summary.readable_id  # pyright: ignore[reportAttributeAccessIssue]
+        for s in pre_existing_suspensions
     }
+    multiplexing_tags = {tag.tag_id: tag.id for tag in multiplexing_tags}  # pyright: ignore[reportAttributeAccessIssue]
 
     new_suspensions = (
         _parse_suspension_row(
             row,
             specimens=specimens,  # pyright: ignore[reportArgumentType]
             people=people,  # pyright: ignore[reportArgumentType]
-            multiplexing_tags=multiplexing_tags,  # pyright: ignore[reportArgumentType]
-            for_pool=False,
+            multiplexing_tags=multiplexing_tags,
+            for_pool=for_pool,
         )
         for row in data
     )

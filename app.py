@@ -148,15 +148,28 @@ async def _update_scamples_api(settings: "Settings"):
             client.create_suspension, new_suspensions, log_errors, error_path_spec
         )
 
-    if settings.suspension_pools and settings.suspensions is None:
-        raise ValueError("cannot specify suspension pools without suspensions")
-    elif (suspension_pools := settings.suspension_pools) and (
-        suspensions := settings.suspensions
+    if settings.suspension_pools and (
+        settings.suspensions is None
+        or settings.gems is None
+        or settings.gems_suspensions is None
     ):
-        suspension_pool_csv = read_csv(suspension_pools)
-        suspensions_csv = read_csv(suspensions)
+        raise ValueError("cannot specify suspension pools without suspensions")
+    elif (
+        (suspension_pools := settings.suspension_pools)
+        and (suspensions := settings.suspensions)
+        and (gems := settings.gems)
+        and (gems_loading := settings.gems_suspensions)
+    ):
+        suspension_pool_csv, suspensions_csv, gems_csv, gems_loading_csv = (
+            read_csv(spec)
+            for spec in [suspension_pools, suspensions, gems, gems_loading]
+        )
         new_suspension_pools = await csvs_to_new_suspension_pools(
-            client, suspension_pool_csv, suspensions_csv
+            client,
+            suspension_pool_csv,
+            suspension_data=suspensions_csv,
+            gems_data=gems_csv,
+            gems_loading_data=gems_loading_csv,
         )
         error_path_spec = (
             (errors_dir, lambda pool: pool.readable_id) if errors_dir else None
