@@ -20,6 +20,7 @@ from utils import (
     date_str_to_eastcoast_9am,
     get_person_email_id_map,
     row_is_empty,
+    str_to_bool,
     str_to_float,
     to_snake_case,
 )
@@ -95,6 +96,7 @@ def _parse_cell_or_nucleus_diameter(
     row: dict[str, Any],
     value_key: str,
     measured_at: datetime,
+    biological_material: BiologicalMaterial | None = None,
     instrument_name: str | None = None,
 ) -> SuspensionMeasurementFields.MeanDiameter | None:
     if value := row[value_key]:
@@ -102,7 +104,11 @@ def _parse_cell_or_nucleus_diameter(
     else:
         return None
 
-    biological_material = BiologicalMaterial(to_snake_case(row["biological_material"]))
+    if biological_material is None:
+        biological_material = BiologicalMaterial(
+            to_snake_case(row["biological_material"])
+        )
+
     unit = (biological_material, LengthUnit.Micrometer)
 
     return SuspensionMeasurementFields.MeanDiameter(
@@ -129,9 +135,6 @@ def _parse_suspension_row(
     multiplexing_tags: dict[str, UUID],
     for_pool: bool,
 ) -> NewSuspension | None:
-    if row["readable_id"] == "0":
-        return None
-
     required_keys = {
         "readable_id",
         "parent_specimen_readable_id",
@@ -139,7 +142,7 @@ def _parse_suspension_row(
         "preparer_1_email",
         "target_cell_recovery",
     }
-    is_empty = row_is_empty(row, required_keys)
+    is_empty = row_is_empty(row, required_keys, empty_equivalent={"readable_id": ["0"]})
 
     if is_empty:
         return None
@@ -154,12 +157,14 @@ def _parse_suspension_row(
 
     if for_pool and is_ocm:
         return None
-    elif for_pool and has_pooled_into_id:
-        data["multiplexing_tag_id"] = multiplexing_tags.get(multiplexing_tag_id)
     elif for_pool and not has_pooled_into_id:
         return None
-    elif is_ocm:
+    elif for_pool and has_pooled_into_id:
         data["multiplexing_tag_id"] = multiplexing_tags.get(multiplexing_tag_id)
+    elif is_ocm:
+        data["multiplexing_tag_id"] = multiplexing_tags[multiplexing_tag_id]
+    elif not for_pool and has_pooled_into_id:
+        return None
 
     try:
         parent_specimen = specimens[row["parent_specimen_readable_id"]]
@@ -172,7 +177,7 @@ def _parse_suspension_row(
     data["parent_specimen_id"] = parent_specimen.info.id_
 
     if date_created := row["date_created"]:
-        row["created_at"] = date_str_to_eastcoast_9am(date_created)
+        data["created_at"] = date_str_to_eastcoast_9am(date_created)
 
     data["biological_material"] = BiologicalMaterial(
         to_snake_case(row["biological_material"])
@@ -191,8 +196,7 @@ def _parse_suspension_row(
 
     data["additional_data"] = {key: row[key] for key in ["experiment_id", "notes"]}
     for key in ["fails_quality_control", "filtered_more_than_once"]:
-        if value := row[key]:
-            data["additional_data"][key] = bool(value.lower())
+        data["additional_data"][key] = str_to_bool(row[key])
 
     data["measurements"] = []
 

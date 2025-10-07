@@ -24,6 +24,10 @@ def str_to_float(s: str) -> float:
     return f
 
 
+def str_to_bool(s: str) -> bool | None:
+    return {"TRUE": True, "FALSE": False}.get(s)
+
+
 def date_str_to_eastcoast_9am(date_str: str) -> datetime.datetime:
     date = datetime.date.fromisoformat(date_str)
     return datetime.datetime(
@@ -85,9 +89,15 @@ def read_csv(spec: CsvSpec) -> list[dict[str, Any]]:
         return _rename_csv_fields(data, spec.field_renaming)
 
 
-def row_is_empty(row: dict[str, Any], required_keys: set[str]) -> bool:
-    is_empty = all(row[key] is None for key in required_keys)
-    if is_empty:
+def row_is_empty(
+    row: dict[str, Any],
+    required_keys: set[str],
+    empty_equivalent: dict[str, list[Any]] = {},
+) -> bool:
+    is_empty1 = all(row[key] is None for key in required_keys)
+    is_empty2 = any(row[key] in empty_equivalent[key] for key in empty_equivalent)
+
+    if is_empty1 or is_empty2:
         return True
 
     is_partially_empty = any(row[key] is None for key in required_keys)

@@ -14,6 +14,7 @@ from pydantic_settings import (
 from scamplepy import ScamplersClient
 from scamplepy.errors import ScamplersErrorResponse
 
+from models.chromium_runs import csv_to_chromium_runs
 from models.institutions import (
     csv_to_new_institutions,
 )
@@ -48,7 +49,7 @@ async def _catch_exception(
                 if error_path.exists():
                     infix += 1
 
-            error_path.write_bytes(e.error._0.to_json_bytes())
+            error_path.write_bytes(e.error.to_json_bytes())
 
 
 async def _send_requests(
@@ -177,6 +178,23 @@ async def _update_scamples_api(settings: "Settings"):
         await _send_requests(
             client.create_suspension_pool,
             new_suspension_pools,
+            log_errors,
+            error_path_spec,
+        )
+
+    if settings.gems is not None and settings.gems_suspensions is None:
+        raise ValueError("cannot specify GEMs CSV without GEMs-suspensions")
+
+    if (gems := settings.gems) and (gems_suspensions := settings.gems_suspensions):
+        gems = read_csv(gems)
+        gems_suspensions = read_csv(gems_suspensions)
+        new_chromium_runs = await csv_to_chromium_runs(client, gems, gems_suspensions)
+        error_path_spec = (
+            (errors_dir, lambda run: run.inner.readable_id) if errors_dir else None
+        )
+        await _send_requests(
+            client.create_chromium_run,
+            new_chromium_runs,
             log_errors,
             error_path_spec,
         )
