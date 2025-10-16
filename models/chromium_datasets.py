@@ -27,6 +27,7 @@ def _parse_dir(
 ):
     library_readable_ids = path.name.split("-")[:-1]
     print(library_readable_ids)
+    return None
 
 
 async def parse_chromium_dataset_dirs(
@@ -53,7 +54,7 @@ async def parse_chromium_dataset_dirs(
         "summary.data_path", "summary.id", pre_existing_datasets
     )
 
-    datasets = (_parse_dir(path) for path in dataset_dirs)
+    datasets = (_parse_dir(path, libraries) for path in dataset_dirs)
     datasets = (
         ds
         for ds in datasets

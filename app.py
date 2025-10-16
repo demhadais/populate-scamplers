@@ -16,6 +16,7 @@ from scamplepy.create import NewCdnaGroup
 from scamplepy.errors import ScamplersErrorResponse
 
 from models.cdna import csv_to_new_cdna
+from models.chromium_datasets import parse_chromium_dataset_dirs
 from models.chromium_runs import csv_to_chromium_runs
 from models.institutions import (
     csv_to_new_institutions,
@@ -235,6 +236,9 @@ async def _update_scamples_api(settings: "Settings"):
             log_errors,
             error_path_spec,
         )
+
+    if dataset_dirs := settings.dataset_dirs:
+        await parse_chromium_dataset_dirs(client, dataset_dirs)
 
 
 class Settings(BaseSettings):
