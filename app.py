@@ -12,13 +12,16 @@ from pydantic_settings import (
     TomlConfigSettingsSource,
 )
 from scamplepy import ScamplersClient
+from scamplepy.create import NewCdnaGroup
 from scamplepy.errors import ScamplersErrorResponse
 
+from models.cdna import csv_to_new_cdna
 from models.chromium_runs import csv_to_chromium_runs
 from models.institutions import (
     csv_to_new_institutions,
 )
 from models.labs import csv_to_new_labs
+from models.libraries import csv_to_new_libraries
 from models.people import csv_to_new_people
 from models.specimen_measurements import csv_to_new_specimen_measurements
 from models.specimens import csv_to_new_specimens
@@ -195,6 +198,40 @@ async def _update_scamples_api(settings: "Settings"):
         await _send_requests(
             client.create_chromium_run,
             new_chromium_runs,
+            log_errors,
+            error_path_spec,
+        )
+
+    if cdna := settings.cdna:
+        data = read_csv(cdna)
+        new_cdna = await csv_to_new_cdna(client, data)
+
+        def extract_cdna_group_readable_ids(cdna_group: NewCdnaGroup) -> str:
+            match cdna_group:
+                case NewCdnaGroup.Single(c):
+                    return c.readable_id
+                case NewCdnaGroup.Multiple(m) | NewCdnaGroup.OnChipMultiplexing(m):
+                    return "-".join(c.readable_id for c in m)
+
+        error_path_spec = (
+            (errors_dir, extract_cdna_group_readable_ids) if errors_dir else None
+        )
+        await _send_requests(
+            client.create_cdna,
+            new_cdna,
+            log_errors,
+            error_path_spec,
+        )
+
+    if libraries := settings.libraries:
+        data = read_csv(libraries)
+        new_libraries = await csv_to_new_libraries(client, data)
+        error_path_spec = (
+            (errors_dir, lambda lib: lib.readable_id) if errors_dir else None
+        )
+        await _send_requests(
+            client.create_library,
+            new_libraries,
             log_errors,
             error_path_spec,
         )
