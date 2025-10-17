@@ -58,9 +58,13 @@ def _parse_dir(
     if data_path is None:
         raise ValueError(f"did not find cellranger directory for {path}")
 
-    data: dict[str, Any] = {"name": data_path.parent.name}
+    data: dict[str, Any] = {"name": path.name}
     data["data_path"] = data["name"]
-    data["lab_id"] = labs[data_path.parent.parent.parent.name]
+    lab_dir = path.parent.parent
+    if not lab_dir:
+        print(lab_dir.absolute())
+        exit()
+    data["lab_id"] = labs[lab_dir.name]
     data["delivered_at"] = datetime.fromtimestamp(data_path.stat().st_mtime, tz=UTC)
     data["library_ids"] = library_ids
 
