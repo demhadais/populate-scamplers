@@ -60,11 +60,11 @@ def _parse_dir(
 
     data: dict[str, Any] = {"name": path.name}
     data["data_path"] = data["name"]
-    lab_dir = path.parent.parent
-    if not lab_dir:
-        print(lab_dir.absolute())
+    try:
+        data["lab_id"] = labs[path.parent.parent.name]
+    except KeyError:
+        print(path.absolute())
         exit()
-    data["lab_id"] = labs[lab_dir.name]
     data["delivered_at"] = datetime.fromtimestamp(data_path.stat().st_mtime, tz=UTC)
     data["library_ids"] = library_ids
 
