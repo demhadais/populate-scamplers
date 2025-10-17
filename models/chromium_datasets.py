@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime
 import re
 from collections.abc import Generator
 from pathlib import Path
@@ -61,7 +61,7 @@ def _parse_dir(
     data: dict[str, Any] = {"name": data_path.parent.name}
     data["data_path"] = data["name"]
     data["lab_id"] = labs[data_path.parent.parent.parent.name]
-    data["delivered_at"] = datetime.fromtimestamp(data_path.stat().st_mtime)
+    data["delivered_at"] = datetime.fromtimestamp(data_path.stat().st_mtime, tz=UTC)
     data["library_ids"] = library_ids
 
     per_sample_outs = data_path / "per_sample_outs"
