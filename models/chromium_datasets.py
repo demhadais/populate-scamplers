@@ -6,6 +6,11 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 from scamplepy import ScamplersClient
+from scamplepy.common import (
+    JsonMetricsFile,
+    MultiRowCsvMetricsFile,
+    SingleRowCsvMetricsFile,
+)
 from scamplepy.create import (
     NewCellrangerCountDataset,
     NewCellrangerMultiDataset,
@@ -53,11 +58,9 @@ def _parse_dir(
     if data_path is None:
         raise ValueError(f"did not find cellranger directory for {path}")
 
-    data: dict[str, Any] = {"name": data_path.name}
+    data: dict[str, Any] = {"name": data_path.parent.name}
     data["lab_id"] = labs[data_path.parent.parent.parent.name]
-
-    stat = data_path.stat()
-    data["delivered_at"] = datetime.fromtimestamp(stat.st_mtime)
+    data["delivered_at"] = datetime.fromtimestamp(data_path.stat().st_mtime)
     data["library_ids"] = library_ids
 
     per_sample_outs = data_path / "per_sample_outs"
@@ -65,10 +68,34 @@ def _parse_dir(
         data["web_summaries"] = [
             (p / "web_summary.html").read_text() for p in per_sample_outs.iterdir()
         ]
+        metrics = ((p / "metrics_summary.csv") for p in per_sample_outs.iterdir())
+        data["metrics"] = [
+            MultiRowCsvMetricsFile(
+                filename=f"{p.parent.name}/{p.name}", raw_contents=p.read_text()
+            )
+            for p in metrics
+        ]
     else:
         data["web_summaries"] = [(data_path / "web_summary.html").read_text()]
 
-    print(data)
+    match data_path.name:
+        case "cellranger":
+            metrics = data_path / "metrics_summary.csv"
+            data["metrics"] = SingleRowCsvMetricsFile(
+                filename=metrics.name, raw_contents=metrics.read_text()
+            )
+        case "cellranger-arc":
+            metrics = data_path / "summary.csv"
+            data["metrics"] = SingleRowCsvMetricsFile(
+                filename=metrics.name, raw_contents=metrics.read_text()
+            )
+        case "cellranger-atac":
+            metrics = data_path / "summary.json"
+            data["metrics"] = JsonMetricsFile(
+                filename=metrics.name, raw_contents=metrics.read_text()
+            )
+
+    print({k: v for k, v in data if k != "web_summaries"})
 
     return None
 
