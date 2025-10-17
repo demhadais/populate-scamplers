@@ -95,7 +95,7 @@ def _parse_dir(
                 filename=metrics.name, raw_contents=metrics.read_text()
             )
 
-    print({k: v for k, v in data if k != "web_summaries"})
+    print({k: v for k, v in data.items() if k != "web_summaries"})
 
     return None
 
