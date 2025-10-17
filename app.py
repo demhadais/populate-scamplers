@@ -238,7 +238,7 @@ async def _update_scamples_api(settings: "Settings"):
         )
 
     if dataset_dirs := settings.dataset_dirs:
-        await parse_chromium_dataset_dirs(client, dataset_dirs)
+        list(await parse_chromium_dataset_dirs(client, dataset_dirs))
 
 
 class Settings(BaseSettings):
