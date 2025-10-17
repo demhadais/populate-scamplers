@@ -237,8 +237,16 @@ async def _update_scamples_api(settings: "Settings"):
         )
 
     if dataset_dirs := settings.dataset_dirs:
+        import json
+
         for ds in await parse_chromium_dataset_dirs(client, dataset_dirs):
-            print(ds.to_json_string())
+            print(
+                {
+                    k: v
+                    for k, v in json.loads(ds.to_json_string()).items()
+                    if k != "web_summaries"
+                }
+            )
 
 
 class Settings(BaseSettings):
