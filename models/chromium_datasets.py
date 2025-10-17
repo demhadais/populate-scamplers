@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 from scamplepy import ScamplersClient
-from scamplepy.common import (
+from scamplepy.create import (
     JsonMetricsFile,
     MultiRowCsvMetricsFile,
     SingleRowCsvMetricsFile,
