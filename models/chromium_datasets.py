@@ -40,7 +40,7 @@ def _parse_dir(
     except KeyError:
         return None
 
-    cellranger_dirs = {
+    cellranger_dir_class_map = {
         "cellranger": NewCellrangerCountDataset,
         "cellranger-multi": NewCellrangerMultiDataset,
         "cellranger-vdj": NewCellrangerVdjDataset,
@@ -50,7 +50,7 @@ def _parse_dir(
     }
 
     data_path = None
-    for cellranger_dir in cellranger_dirs:
+    for cellranger_dir in cellranger_dir_class_map:
         data_path = path / cellranger_dir
         if data_path.exists():
             break
@@ -59,6 +59,7 @@ def _parse_dir(
         raise ValueError(f"did not find cellranger directory for {path}")
 
     data: dict[str, Any] = {"name": data_path.parent.name}
+    data["data_path"] = data["name"]
     data["lab_id"] = labs[data_path.parent.parent.parent.name]
     data["delivered_at"] = datetime.fromtimestamp(data_path.stat().st_mtime)
     data["library_ids"] = library_ids
@@ -95,9 +96,7 @@ def _parse_dir(
                 filename=metrics.name, raw_contents=metrics.read_text()
             )
 
-    print({k: v for k, v in data.items() if k != "web_summaries"})
-
-    return None
+    return cellranger_dir_class_map[data_path.name](**data)
 
 
 async def parse_chromium_dataset_dirs(
