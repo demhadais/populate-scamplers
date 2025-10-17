@@ -312,7 +312,7 @@ wheels = [
 [[package]]
 name = "scamplepy"
 version = "0.1.0"
-source = { git = "https://github.com/demhadais/scamplers?subdirectory=rust%2Fscamplepy#ff17e90e03fdcae423c3e74cbd927c508aa7ce44" }
+source = { git = "https://github.com/demhadais/scamplers?subdirectory=rust%2Fscamplepy#f5e182a3b88f566aa917aa1bfc7e20c9d23c33dc" }
 
 [[package]]
 name = "typing-extensions"
