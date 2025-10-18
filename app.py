@@ -6,6 +6,7 @@ from typing import Any, TypeVar
 
 from pydantic_settings import (
     BaseSettings,
+    CliPositionalArg,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
     TomlConfigSettingsSource,
@@ -271,7 +272,7 @@ class Settings(BaseSettings):
     cdna: CsvSpec | None = None
     libraries: CsvSpec | None = None
     sequencing_submissions: CsvSpec | None = None
-    dataset_dirs: list[Path] = []
+    dataset_dirs: CliPositionalArg[list[Path]] = []
     dry_run: bool = False
     print_requests: bool = False
     save_requests: Path | None = None
