@@ -24,6 +24,7 @@ from models.institutions import (
 from models.labs import csv_to_new_labs
 from models.libraries import csv_to_new_libraries
 from models.people import csv_to_new_people
+from models.sequencing_runs import csv_to_sequencing_runs
 from models.specimen_measurements import csv_to_new_specimen_measurements
 from models.specimens import csv_to_new_specimens
 from models.suspension_pools import csvs_to_new_suspension_pools
@@ -233,6 +234,26 @@ async def _update_scamples_api(settings: "Settings"):
         await _send_requests(
             client.create_library,
             new_libraries,
+            log_errors,
+            error_path_spec,
+        )
+
+    if sequencing_submissions := settings.sequencing_submissions:
+        data = read_csv(sequencing_submissions)
+        new_sequencing_runs = await csv_to_sequencing_runs(client, data)
+        error_path_spec = (
+            (
+                errors_dir,
+                lambda seq_run: "_".join(
+                    ilab_id for ilab_id in seq_run.additional_data["ilab_request_ids"]
+                ),
+            )
+            if errors_dir
+            else None
+        )
+        await _send_requests(
+            client.create_sequencing_run,
+            new_sequencing_runs,
             log_errors,
             error_path_spec,
         )

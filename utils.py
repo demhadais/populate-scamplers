@@ -28,6 +28,19 @@ def str_to_bool(s: str) -> bool | None:
     return {"TRUE": True, "FALSE": False}.get(s)
 
 
+def shitty_date_str_to_eastcoast_9am(date_str: str) -> datetime.datetime:
+    i_cant_believe_this_is_the_format_month, day, year = (
+        date_str.split("-")[0].split("&")[0].split("/")
+    )
+    return datetime.datetime(
+        year=int(year),
+        month=int(i_cant_believe_this_is_the_format_month),
+        day=int(day),
+        hour=13,
+        tzinfo=datetime.UTC,
+    )
+
+
 def date_str_to_eastcoast_9am(date_str: str) -> datetime.datetime:
     date = datetime.date.fromisoformat(date_str)
     return datetime.datetime(
