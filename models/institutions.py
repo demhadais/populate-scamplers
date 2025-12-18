@@ -1,38 +1,35 @@
 from collections.abc import Generator
 from typing import Any
-from uuid import UUID
 
-from scamplepy import ScamplersClient
-from scamplepy.create import NewInstitution
-from scamplepy.query import InstitutionQuery
+import httpx
 
 from utils import row_is_empty
 
 
-def _parse_row(row: dict[str, Any]) -> NewInstitution | None:
+def _parse_row(row: dict[str, Any]) -> dict[str, Any] | None:
     required_keys = {"id", "name"}
 
     if row_is_empty(row, required_keys):
         return None
 
-    data = {key: row[key] for key in ["name"]}
-    data["id"] = UUID(row["id"])
+    data = {key: row[key] for key in ["id", "name"]}
 
-    return NewInstitution(**data)
+    return data
 
 
 async def csv_to_new_institutions(
-    client: ScamplersClient,
+    client: httpx.AsyncClient,
+    institutions_url: str,
     data: list[dict[str, Any]],
-) -> Generator[NewInstitution]:
+) -> Generator[dict[str, Any]]:
     pre_existing_institutions = {
-        inst.id for inst in await client.list_institutions(InstitutionQuery())
+        inst["id"] for inst in (await client.get(institutions_url)).json()
     }
     new_institutions = (_parse_row(row) for row in data)
     new_institutions = (
         inst
         for inst in new_institutions
-        if not (inst is None or inst.id in pre_existing_institutions)
+        if not (inst is None or inst["id"] in pre_existing_institutions)
     )
 
     return new_institutions

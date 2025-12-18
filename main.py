@@ -1,5 +1,7 @@
 import asyncio
+
 from pydantic_settings import CliApp
+
 from app import Settings
 
 

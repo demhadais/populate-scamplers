@@ -1,14 +1,15 @@
 import csv
-from collections.abc import Iterable
 import datetime
 import logging
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
 from pydantic.main import BaseModel
-from scamplepy import ScamplersClient
-from scamplepy.query import LabQuery, PersonQuery
+
+# from scamplepy import ScamplersClient
+# from scamplepy.query import LabQuery, PersonQuery
 
 
 def to_snake_case(s: str):
@@ -124,17 +125,17 @@ def row_is_empty(
     return False
 
 
-async def get_lab_name_id_map(client: ScamplersClient) -> dict[str, UUID]:
-    labs = await client.list_labs(LabQuery(limit=9_999))
-    labs = property_id_map("info.summary.name", "info.id_", labs)
-    labs = labs | {name.lower(): id for name, id in labs.items()}
+# async def get_lab_name_id_map(client: ScamplersClient) -> dict[str, UUID]:
+#     labs = await client.list_labs(LabQuery(limit=9_999))
+#     labs = property_id_map("info.summary.name", "info.id_", labs)
+#     labs = labs | {name.lower(): id for name, id in labs.items()}
 
-    return labs
+#     return labs
 
 
-async def get_person_email_id_map(client: ScamplersClient) -> dict[str, UUID]:
-    people = await client.list_people(PersonQuery(limit=9_999))
-    people = property_id_map("info.summary.email", "info.id_", people)
-    people = people | {email.lower(): id for email, id in people.items()}
+# async def get_person_email_id_map(client: ScamplersClient) -> dict[str, UUID]:
+#     people = await client.list_people(PersonQuery(limit=9_999))
+#     people = property_id_map("info.summary.email", "info.id_", people)
+#     people = people | {email.lower(): id for email, id in people.items()}
 
-    return people
+#     return people

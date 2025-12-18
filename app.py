@@ -1,9 +1,10 @@
 import asyncio
-from collections.abc import Callable, Coroutine, Iterable
-import logging
+import json
+from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any
 
+import httpx
 from pydantic_settings import (
     BaseSettings,
     CliPositionalArg,
@@ -11,262 +12,245 @@ from pydantic_settings import (
     SettingsConfigDict,
     TomlConfigSettingsSource,
 )
-from scamplepy import ScamplersClient
-from scamplepy.create import NewCdnaGroup
-from scamplepy.errors import ScamplersErrorResponse
 
-from models.cdna import csv_to_new_cdna
-from models.chromium_datasets import parse_chromium_dataset_dirs
-from models.chromium_runs import csv_to_chromium_runs
+# from models.cdna import csv_to_new_cdna
+# from models.chromium_datasets import parse_chromium_dataset_dirs
+# from models.chromium_runs import csv_to_chromium_runs
 from models.institutions import (
     csv_to_new_institutions,
 )
-from models.labs import csv_to_new_labs
-from models.libraries import csv_to_new_libraries
-from models.people import csv_to_new_people
-from models.sequencing_runs import csv_to_sequencing_runs
-from models.specimen_measurements import csv_to_new_specimen_measurements
-from models.specimens import csv_to_new_specimens
-from models.suspension_pools import csvs_to_new_suspension_pools
-from models.suspensions import csv_to_new_suspensions
+
+# from models.labs import csv_to_new_labs
+# from models.libraries import csv_to_new_libraries
+# from models.people import csv_to_new_people
+# from models.sequencing_runs import csv_to_sequencing_runs
+# from models.specimen_measurements import csv_to_new_specimen_measurements
+# from models.specimens import csv_to_new_specimens
+# from models.suspension_pools import csvs_to_new_suspension_pools
+# from models.suspensions import csv_to_new_suspensions
 from utils import CsvSpec, read_csv
 
 POPULATE_SCAMPLERS = "populate-scamplers"
 
-_Req = TypeVar("_Req")
-_Ret = TypeVar("_Ret")
 
-
-async def _catch_exception(
-    coro: Coroutine[_Ret, Any, _Ret], log_error: bool, error_path: Path | None
-) -> _Ret | None:
-    try:
-        return await coro
-    except Exception as e:
-        if log_error:
-            logging.error(e)
-        if error_path is not None and isinstance(e, ScamplersErrorResponse):
-            infix = 0
-            while error_path.exists():
-                error_path = error_path.with_name(
-                    error_path.stem + f"-{infix}" + error_path.suffix
-                )
-                if error_path.exists():
-                    infix += 1
-
-            error_path.write_bytes(e.error.to_json_bytes())
-
-
-async def _send_requests(
-    func: Callable[[_Req], Coroutine[_Ret, Any, _Ret]],
-    data: Iterable[_Req],
-    log_errors: bool,
-    error_path_spec: tuple[Path, Callable[[_Req], str]] | None = None,
-) -> list[tuple[_Req, _Ret]]:
+async def _post_many(
+    client: httpx.AsyncClient, url: str, data: Iterable[dict[str, Any]]
+) -> list[tuple[dict[str, Any], httpx.Response]]:
     responses = []
     async with asyncio.TaskGroup() as tg:
         for d in data:
-            coroutine = func(d)
-
-            error_path = None
-            if error_path_spec is not None:
-                error_dir, error_path_creator = error_path_spec
-                error_path = (error_dir / str(error_path_creator(d))).with_suffix(
-                    ".json"
-                )
-
-            coroutine_with_caught_exception = _catch_exception(
-                coroutine, log_errors, error_path
-            )
-            task = tg.create_task(coroutine_with_caught_exception)
+            task = tg.create_task(client.post(url, json=d))
             responses.append((d, task))
 
-    return [(d, r.result()) for d, r in responses]
+    return [(d, task.result()) for d, task in responses]
+
+
+def _write_errors(
+    request_response_pairs: list[tuple[dict[str, Any], httpx.Response]],
+    error_path_spec: tuple[Path, Callable[[dict[str, Any]], str]] | None,
+):
+    if error_path_spec is None:
+        return
+
+    for req, resp in (
+        (req, resp) for req, resp in request_response_pairs if resp.is_error
+    ):
+        error_dir, error_path_creator = error_path_spec
+        error_path = (error_dir / str(error_path_creator(req))).with_suffix(".json")
+
+        infix = 0
+        while error_path.exists():
+            error_path = error_path.with_name(
+                error_path.stem + f"-{infix}" + error_path.suffix
+            )
+            if error_path.exists():
+                infix += 1
+
+        error_path.write_text(json.dumps(resp.json()))
 
 
 async def _update_scamples_api(settings: "Settings"):
-    client = ScamplersClient(
-        api_base_url=settings.api_base_url,
-        api_key=settings.api_key,
-        accept_invalid_certificates=settings.accept_invalid_certificates,
-    )
+    client = httpx.AsyncClient(headers={"X-API-Key": settings.api_key}, http2=True)
 
     errors_dir = settings.errors_dir
-    log_errors = settings.log_errors
 
     if institutions := settings.institutions:
+        url = f"{settings.api_base_url}/institutions"
         data = read_csv(institutions)
         new_institutions = await csv_to_new_institutions(
             client,
+            url,
             data,
         )
-        error_path_spec = (errors_dir, lambda i: str(i.id)) if errors_dir else None
-        await _send_requests(
-            client.create_institution, new_institutions, log_errors, error_path_spec
-        )
+        error_path_spec = (errors_dir, lambda i: str(i["id"])) if errors_dir else None
 
-    if people := settings.people:
-        data = read_csv(people)
-        new_people = await csv_to_new_people(client, data)
-        error_path_spec = (
-            (errors_dir, lambda pers: pers.email.replace("@", "at"))
-            if errors_dir
-            else None
-        )
-        await _send_requests(
-            client.create_person, new_people, log_errors, error_path_spec
-        )
-
-    if labs := settings.labs:
-        data = read_csv(labs)
-        new_labs = await csv_to_new_labs(
+        responses = await _post_many(
             client,
-            data,
+            url,
+            new_institutions,
         )
-        error_path_spec = (errors_dir, lambda lab: lab.name) if errors_dir else None
-        await _send_requests(client.create_lab, new_labs, log_errors, error_path_spec)
+        _write_errors(responses, error_path_spec)
 
-    if specimens := settings.specimens:
-        data = read_csv(specimens)
-        new_specimens = await csv_to_new_specimens(client, data)
-        error_path_spec = (
-            (errors_dir, lambda spec: spec.inner.readable_id) if errors_dir else None
-        )
-        await _send_requests(
-            client.create_specimen, new_specimens, log_errors, error_path_spec
-        )
+    # if people := settings.people:
+    #     data = read_csv(people)
+    #     new_people = await csv_to_new_people(client, data)
+    #     error_path_spec = (
+    #         (errors_dir, lambda pers: pers.email.replace("@", "at"))
+    #         if errors_dir
+    #         else None
+    #     )
+    #     await _post_many(client.create_person, new_people, log_errors, error_path_spec)
 
-    if specimen_measurements := settings.specimen_measurements:
-        data = read_csv(specimen_measurements)
-        specimen_updates = await csv_to_new_specimen_measurements(client, data)
-        error_path_spec = (errors_dir, lambda upd: upd.id) if errors_dir else None
-        await _send_requests(
-            client.update_specimen, specimen_updates, log_errors, error_path_spec
-        )
+    # if labs := settings.labs:
+    #     data = read_csv(labs)
+    #     new_labs = await csv_to_new_labs(
+    #         client,
+    #         data,
+    #     )
+    #     error_path_spec = (errors_dir, lambda lab: lab.name) if errors_dir else None
+    #     await _post_many(client.create_lab, new_labs, log_errors, error_path_spec)
 
-    if suspensions := settings.suspensions:
-        data = read_csv(suspensions)
-        new_suspensions = await csv_to_new_suspensions(client, data, for_pool=False)
-        error_path_spec = (
-            (errors_dir, lambda susp: susp.readable_id) if errors_dir else None
-        )
-        await _send_requests(
-            client.create_suspension, new_suspensions, log_errors, error_path_spec
-        )
+    # if specimens := settings.specimens:
+    #     data = read_csv(specimens)
+    #     new_specimens = await csv_to_new_specimens(client, data)
+    #     error_path_spec = (
+    #         (errors_dir, lambda spec: spec.inner.readable_id) if errors_dir else None
+    #     )
+    #     await _post_many(
+    #         client.create_specimen, new_specimens, log_errors, error_path_spec
+    #     )
 
-    if settings.suspension_pools and (
-        settings.suspensions is None
-        or settings.gems is None
-        or settings.gems_suspensions is None
-    ):
-        raise ValueError("cannot specify suspension pools without suspensions")
-    elif (
-        (suspension_pools := settings.suspension_pools)
-        and (suspensions := settings.suspensions)
-        and (gems := settings.gems)
-        and (gems_loading := settings.gems_suspensions)
-    ):
-        suspension_pool_csv, suspensions_csv, gems_csv, gems_loading_csv = (
-            read_csv(spec)
-            for spec in [suspension_pools, suspensions, gems, gems_loading]
-        )
-        new_suspension_pools = await csvs_to_new_suspension_pools(
-            client,
-            suspension_pool_csv,
-            suspension_data=suspensions_csv,
-            gems_data=gems_csv,
-            gems_loading_data=gems_loading_csv,
-        )
-        error_path_spec = (
-            (errors_dir, lambda pool: pool.readable_id) if errors_dir else None
-        )
-        await _send_requests(
-            client.create_suspension_pool,
-            new_suspension_pools,
-            log_errors,
-            error_path_spec,
-        )
+    # if specimen_measurements := settings.specimen_measurements:
+    #     data = read_csv(specimen_measurements)
+    #     specimen_updates = await csv_to_new_specimen_measurements(client, data)
+    #     error_path_spec = (errors_dir, lambda upd: upd.id) if errors_dir else None
+    #     await _post_many(
+    #         client.update_specimen, specimen_updates, log_errors, error_path_spec
+    #     )
 
-    if settings.gems is not None and settings.gems_suspensions is None:
-        raise ValueError("cannot specify GEMs CSV without GEMs-suspensions")
+    # if suspensions := settings.suspensions:
+    #     data = read_csv(suspensions)
+    #     new_suspensions = await csv_to_new_suspensions(client, data, for_pool=False)
+    #     error_path_spec = (
+    #         (errors_dir, lambda susp: susp.readable_id) if errors_dir else None
+    #     )
+    #     await _post_many(
+    #         client.create_suspension, new_suspensions, log_errors, error_path_spec
+    #     )
 
-    if (gems := settings.gems) and (gems_suspensions := settings.gems_suspensions):
-        gems = read_csv(gems)
-        gems_suspensions = read_csv(gems_suspensions)
-        new_chromium_runs = await csv_to_chromium_runs(client, gems, gems_suspensions)
-        error_path_spec = (
-            (errors_dir, lambda run: run.inner.readable_id) if errors_dir else None
-        )
-        await _send_requests(
-            client.create_chromium_run,
-            new_chromium_runs,
-            log_errors,
-            error_path_spec,
-        )
+    # if settings.suspension_pools and (
+    #     settings.suspensions is None
+    #     or settings.gems is None
+    #     or settings.gems_suspensions is None
+    # ):
+    #     raise ValueError("cannot specify suspension pools without suspensions")
+    # elif (
+    #     (suspension_pools := settings.suspension_pools)
+    #     and (suspensions := settings.suspensions)
+    #     and (gems := settings.gems)
+    #     and (gems_loading := settings.gems_suspensions)
+    # ):
+    #     suspension_pool_csv, suspensions_csv, gems_csv, gems_loading_csv = (
+    #         read_csv(spec)
+    #         for spec in [suspension_pools, suspensions, gems, gems_loading]
+    #     )
+    #     new_suspension_pools = await csvs_to_new_suspension_pools(
+    #         client,
+    #         suspension_pool_csv,
+    #         suspension_data=suspensions_csv,
+    #         gems_data=gems_csv,
+    #         gems_loading_data=gems_loading_csv,
+    #     )
+    #     error_path_spec = (
+    #         (errors_dir, lambda pool: pool.readable_id) if errors_dir else None
+    #     )
+    #     await _post_many(
+    #         client.create_suspension_pool,
+    #         new_suspension_pools,
+    #         log_errors,
+    #         error_path_spec,
+    #     )
 
-    if cdna := settings.cdna:
-        data = read_csv(cdna)
-        new_cdna = await csv_to_new_cdna(client, data)
+    # if settings.gems is not None and settings.gems_suspensions is None:
+    #     raise ValueError("cannot specify GEMs CSV without GEMs-suspensions")
 
-        def extract_cdna_group_readable_ids(cdna_group: NewCdnaGroup) -> str:
-            match cdna_group:
-                case NewCdnaGroup.Single(c):
-                    return c.readable_id
-                case NewCdnaGroup.Multiple(m) | NewCdnaGroup.OnChipMultiplexing(m):
-                    return "-".join(c.readable_id for c in m)
+    # if (gems := settings.gems) and (gems_suspensions := settings.gems_suspensions):
+    #     gems = read_csv(gems)
+    #     gems_suspensions = read_csv(gems_suspensions)
+    #     new_chromium_runs = await csv_to_chromium_runs(client, gems, gems_suspensions)
+    #     error_path_spec = (
+    #         (errors_dir, lambda run: run.inner.readable_id) if errors_dir else None
+    #     )
+    #     await _post_many(
+    #         client.create_chromium_run,
+    #         new_chromium_runs,
+    #         log_errors,
+    #         error_path_spec,
+    #     )
 
-        error_path_spec = (
-            (errors_dir, extract_cdna_group_readable_ids) if errors_dir else None
-        )
-        await _send_requests(
-            client.create_cdna,
-            new_cdna,
-            log_errors,
-            error_path_spec,
-        )
+    # if cdna := settings.cdna:
+    #     data = read_csv(cdna)
+    #     new_cdna = await csv_to_new_cdna(client, data)
 
-    if libraries := settings.libraries:
-        data = read_csv(libraries)
-        new_libraries = await csv_to_new_libraries(client, data)
-        error_path_spec = (
-            (errors_dir, lambda lib: lib.readable_id) if errors_dir else None
-        )
-        await _send_requests(
-            client.create_library,
-            new_libraries,
-            log_errors,
-            error_path_spec,
-        )
+    #     def extract_cdna_group_readable_ids(cdna_group: NewCdnaGroup) -> str:
+    #         match cdna_group:
+    #             case NewCdnaGroup.Single(c):
+    #                 return c.readable_id
+    #             case NewCdnaGroup.Multiple(m) | NewCdnaGroup.OnChipMultiplexing(m):
+    #                 return "-".join(c.readable_id for c in m)
 
-    if sequencing_submissions := settings.sequencing_submissions:
-        data = read_csv(sequencing_submissions)
-        new_sequencing_runs = await csv_to_sequencing_runs(client, data)
-        error_path_spec = (
-            (
-                errors_dir,
-                lambda seq_run: "_".join(
-                    ilab_id for ilab_id in seq_run.additional_data["ilab_request_ids"]
-                ),
-            )
-            if errors_dir
-            else None
-        )
-        await _send_requests(
-            client.create_sequencing_run,
-            new_sequencing_runs,
-            log_errors,
-            error_path_spec,
-        )
+    #     error_path_spec = (
+    #         (errors_dir, extract_cdna_group_readable_ids) if errors_dir else None
+    #     )
+    #     await _post_many(
+    #         client.create_cdna,
+    #         new_cdna,
+    #         log_errors,
+    #         error_path_spec,
+    #     )
 
-    if dataset_dirs := settings.dataset_dirs:
-        chromium_datasets = await parse_chromium_dataset_dirs(client, dataset_dirs)
-        error_path_spec = (errors_dir, lambda ds: ds.data_path) if errors_dir else None
-        await _send_requests(
-            client.create_chromium_dataset,
-            chromium_datasets,
-            log_errors,
-            error_path_spec,
-        )
+    # if libraries := settings.libraries:
+    #     data = read_csv(libraries)
+    #     new_libraries = await csv_to_new_libraries(client, data)
+    #     error_path_spec = (
+    #         (errors_dir, lambda lib: lib.readable_id) if errors_dir else None
+    #     )
+    #     await _post_many(
+    #         client.create_library,
+    #         new_libraries,
+    #         log_errors,
+    #         error_path_spec,
+    #     )
+
+    # if sequencing_submissions := settings.sequencing_submissions:
+    #     data = read_csv(sequencing_submissions)
+    #     new_sequencing_runs = await csv_to_sequencing_runs(client, data)
+    #     error_path_spec = (
+    #         (
+    #             errors_dir,
+    #             lambda seq_run: "_".join(
+    #                 ilab_id for ilab_id in seq_run.additional_data["ilab_request_ids"]
+    #             ),
+    #         )
+    #         if errors_dir
+    #         else None
+    #     )
+    #     await _post_many(
+    #         client.create_sequencing_run,
+    #         new_sequencing_runs,
+    #         log_errors,
+    #         error_path_spec,
+    #     )
+
+    # if dataset_dirs := settings.dataset_dirs:
+    #     chromium_datasets = await parse_chromium_dataset_dirs(client, dataset_dirs)
+    #     error_path_spec = (errors_dir, lambda ds: ds.data_path) if errors_dir else None
+    #     await _post_many(
+    #         client.create_chromium_dataset,
+    #         chromium_datasets,
+    #         log_errors,
+    #         error_path_spec,
+    #     )
 
 
 class Settings(BaseSettings):
