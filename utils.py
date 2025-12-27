@@ -1,15 +1,13 @@
 import csv
 import datetime
 import logging
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
+from types import NoneType
 from typing import Any
-from uuid import UUID
 
+import httpx
 from pydantic.main import BaseModel
-
-# from scamplepy import ScamplersClient
-# from scamplepy.query import LabQuery, PersonQuery
 
 
 def to_snake_case(s: str):
@@ -49,22 +47,12 @@ def date_str_to_eastcoast_9am(date_str: str) -> datetime.datetime:
     )
 
 
-def _recursive_getattr(obj: Any, path: str) -> Any:
-    split = path.split(".")
-    if len(split) == 1:
-        return getattr(obj, path)
-    else:
-        return _recursive_getattr(getattr(obj, split[0]), ".".join(split[1:]))
-
-
 def property_id_map(
-    property_path: str, id_path: str, data: list[Any]
-) -> dict[str, UUID]:
-    map = {
-        _recursive_getattr(d, property_path): _recursive_getattr(d, id_path)
-        for d in data
-    }
-    assert len(map) == len(data), f"property {property_path} is not unique"
+    property_name: str, data: list[dict[str, Any]], id_path: str = "id"
+) -> dict[str, str]:
+    map = {d[property_name]: d[id_path] for d in data}
+    assert len(map) == len(data), f"property {property_name} is not unique"
+
     return map
 
 
@@ -87,6 +75,7 @@ class CsvSpec(BaseModel):
     head_row: int = 0
     onedrive_file_id: str | None = None
     field_renaming: dict[str, str] = {}
+    empty_fn: str = "lambda d: False"
 
 
 def read_csv(spec: CsvSpec) -> list[dict[str, Any]]:
@@ -106,10 +95,11 @@ def read_csv(spec: CsvSpec) -> list[dict[str, Any]]:
 def row_is_empty(
     row: dict[str, Any],
     required_keys: set[str],
-    empty_equivalent: dict[str, list[Any]] = {},
+    empty_fn: str,
 ) -> bool:
     is_empty1 = all(row[key] is None for key in required_keys)
-    is_empty2 = any(row[key] in empty_equivalent[key] for key in empty_equivalent)
+    parsed_empty_fn: Callable[[dict[str, Any]], bool] = eval(empty_fn)
+    is_empty2 = parsed_empty_fn(row)
 
     if is_empty1 or is_empty2:
         return True
@@ -125,17 +115,45 @@ def row_is_empty(
     return False
 
 
-# async def get_lab_name_id_map(client: ScamplersClient) -> dict[str, UUID]:
-#     labs = await client.list_labs(LabQuery(limit=9_999))
-#     labs = property_id_map("info.summary.name", "info.id_", labs)
-#     labs = labs | {name.lower(): id for name, id in labs.items()}
+async def get_lab_name_id_map(
+    client: httpx.AsyncClient, labs_url: str
+) -> dict[str, str]:
+    labs = (await client.get(labs_url, params={"limit": 9_999})).json()
+    labs = property_id_map("name", labs)
+    labs = labs | {name.lower(): id for name, id in labs.items()}
 
-#     return labs
+    return labs
 
 
-# async def get_person_email_id_map(client: ScamplersClient) -> dict[str, UUID]:
-#     people = await client.list_people(PersonQuery(limit=9_999))
-#     people = property_id_map("info.summary.email", "info.id_", people)
-#     people = people | {email.lower(): id for email, id in people.items()}
+async def get_person_email_id_map(
+    client: httpx.AsyncClient, people_url: str
+) -> dict[str, str]:
+    people = (await client.get(people_url, params={"limit": 9_999})).json()
+    people = property_id_map("email", people)
+    people = people | {email.lower(): id for email, id in people.items()}
 
-#     return people
+    return people
+
+
+def _strip(value: Any) -> Any:
+    if isinstance(value, str):
+        return value.strip()
+    elif isinstance(value, list):
+        return [_strip(inner) for inner in value]
+    elif isinstance(value, datetime.datetime):
+        return str(value)
+    elif isinstance(value, (int, float, bool, NoneType)):
+        return value
+    else:
+        raise TypeError(f"{type(value)}")
+
+
+def strip_str_values(data: dict[str, Any]) -> dict[str, Any]:
+    new_dict = {}
+    for key, val in data.items():
+        if isinstance(val, dict):
+            new_dict[key] = strip_str_values(val)
+        else:
+            new_dict[key] = _strip(val)
+
+    return new_dict

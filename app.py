@@ -13,32 +13,24 @@ from pydantic_settings import (
     TomlConfigSettingsSource,
 )
 
-# from models.cdna import csv_to_new_cdna
-# from models.chromium_datasets import parse_chromium_dataset_dirs
-# from models.chromium_runs import csv_to_chromium_runs
 from models.institutions import (
     csv_to_new_institutions,
 )
+from models.labs import csv_to_new_labs
+from models.people import csv_to_new_people
+from models.specimens import csv_to_new_specimens
+from utils import CsvSpec, read_csv, strip_str_values
 
-# from models.labs import csv_to_new_labs
-# from models.libraries import csv_to_new_libraries
-# from models.people import csv_to_new_people
-# from models.sequencing_runs import csv_to_sequencing_runs
-# from models.specimen_measurements import csv_to_new_specimen_measurements
-# from models.specimens import csv_to_new_specimens
-# from models.suspension_pools import csvs_to_new_suspension_pools
-# from models.suspensions import csv_to_new_suspensions
-from utils import CsvSpec, read_csv
-
-POPULATE_SCAMPLERS = "populate-scamplers"
+POPULATE_CELLNOOR = "populate-cellnoor"
 
 
 async def _post_many(
     client: httpx.AsyncClient, url: str, data: Iterable[dict[str, Any]]
 ) -> list[tuple[dict[str, Any], httpx.Response]]:
+    stripped_string_data = (strip_str_values(d) for d in data)
     responses = []
     async with asyncio.TaskGroup() as tg:
-        for d in data:
+        for d in stripped_string_data:
             task = tg.create_task(client.post(url, json=d))
             responses.append((d, task))
 
@@ -47,16 +39,15 @@ async def _post_many(
 
 def _write_errors(
     request_response_pairs: list[tuple[dict[str, Any], httpx.Response]],
-    error_path_spec: tuple[Path, Callable[[dict[str, Any]], str]] | None,
+    error_dir: Path,
+    filename_generator: Callable[[dict[str, Any]], str] = lambda d: d.get(
+        "readable_id", d["name"]
+    ),
 ):
-    if error_path_spec is None:
-        return
-
     for req, resp in (
         (req, resp) for req, resp in request_response_pairs if resp.is_error
     ):
-        error_dir, error_path_creator = error_path_spec
-        error_path = (error_dir / str(error_path_creator(req))).with_suffix(".json")
+        error_path = (error_dir / str(filename_generator(req))).with_suffix(".json")
 
         infix = 0
         while error_path.exists():
@@ -66,7 +57,9 @@ def _write_errors(
             if error_path.exists():
                 infix += 1
 
-        error_path.write_text(json.dumps(resp.json()))
+        to_write = resp.json()
+        to_write["request"] = req
+        error_path.write_text(json.dumps(to_write))
 
 
 async def _update_scamples_api(settings: "Settings"):
@@ -74,51 +67,57 @@ async def _update_scamples_api(settings: "Settings"):
 
     errors_dir = settings.errors_dir
 
+    institution_url = f"{settings.api_base_url}/institutions"
     if institutions := settings.institutions:
-        url = f"{settings.api_base_url}/institutions"
         data = read_csv(institutions)
         new_institutions = await csv_to_new_institutions(
-            client,
-            url,
-            data,
+            client, institution_url, data, settings.institutions.empty_fn
         )
-        error_path_spec = (errors_dir, lambda i: str(i["id"])) if errors_dir else None
 
         responses = await _post_many(
             client,
-            url,
+            institution_url,
             new_institutions,
         )
-        _write_errors(responses, error_path_spec)
+        _write_errors(responses, errors_dir)
 
-    # if people := settings.people:
-    #     data = read_csv(people)
-    #     new_people = await csv_to_new_people(client, data)
-    #     error_path_spec = (
-    #         (errors_dir, lambda pers: pers.email.replace("@", "at"))
-    #         if errors_dir
-    #         else None
-    #     )
-    #     await _post_many(client.create_person, new_people, log_errors, error_path_spec)
+    people_url = f"{settings.api_base_url}/people"
+    if people := settings.people:
+        data = read_csv(people)
+        new_people = await csv_to_new_people(
+            client, institution_url, people_url, data, settings.people.empty_fn
+        )
+        responses = await _post_many(client, people_url, new_people)
+        _write_errors(
+            responses, errors_dir, lambda pers: pers["email"].replace("@", "at")
+        )
 
-    # if labs := settings.labs:
-    #     data = read_csv(labs)
-    #     new_labs = await csv_to_new_labs(
-    #         client,
-    #         data,
-    #     )
-    #     error_path_spec = (errors_dir, lambda lab: lab.name) if errors_dir else None
-    #     await _post_many(client.create_lab, new_labs, log_errors, error_path_spec)
+    lab_url = f"{settings.api_base_url}/labs"
+    if labs := settings.labs:
+        data = read_csv(labs)
+        new_labs = await csv_to_new_labs(
+            client,
+            people_url=people_url,
+            lab_url=lab_url,
+            data=data,
+            empty_fn=settings.labs.empty_fn,
+        )
+        responses = await _post_many(client, lab_url, new_labs)
+        _write_errors(responses, errors_dir, lambda lab: lab["name"].replace(" ", ""))
 
-    # if specimens := settings.specimens:
-    #     data = read_csv(specimens)
-    #     new_specimens = await csv_to_new_specimens(client, data)
-    #     error_path_spec = (
-    #         (errors_dir, lambda spec: spec.inner.readable_id) if errors_dir else None
-    #     )
-    #     await _post_many(
-    #         client.create_specimen, new_specimens, log_errors, error_path_spec
-    #     )
+    specimen_url = f"{settings.api_base_url}/specimens"
+    if specimens := settings.specimens:
+        data = read_csv(specimens)
+        new_specimens = await csv_to_new_specimens(
+            client,
+            people_url=people_url,
+            lab_url=lab_url,
+            specimen_url=specimen_url,
+            data=data,
+            empty_fn=settings.specimens.empty_fn,
+        )
+        request_response_pairs = await _post_many(client, specimen_url, new_specimens)
+        _write_errors(request_response_pairs, errors_dir)
 
     # if specimen_measurements := settings.specimen_measurements:
     #     data = read_csv(specimen_measurements)
@@ -255,11 +254,11 @@ async def _update_scamples_api(settings: "Settings"):
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_prefix=POPULATE_SCAMPLERS.upper(),
+        env_prefix=POPULATE_CELLNOOR.upper(),
         cli_kebab_case=True,
     )
 
-    config_path: Path = Path.home() / ".config" / POPULATE_SCAMPLERS / "settings.toml"
+    config_path: Path = Path.home() / ".config" / POPULATE_CELLNOOR / "settings.toml"
     api_base_url: str
     api_key: str
     accept_invalid_certificates: bool = False
@@ -280,7 +279,7 @@ class Settings(BaseSettings):
     print_requests: bool = False
     save_requests: Path | None = None
     log_errors: bool = True
-    errors_dir: Path | None = None
+    errors_dir: Path = Path(".errors")
 
     @classmethod
     def settings_customise_sources(

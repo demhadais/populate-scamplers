@@ -1,26 +1,9 @@
 import asyncio
+import logging
 from collections.abc import Generator
 from typing import Any
-from uuid import UUID
 
-from scamplepy import ScamplersClient
-from scamplepy.create import (
-    BlockFixative,
-    FixedBlockEmbeddingMatrix,
-    FrozenBlockEmbeddingMatrix,
-    Species,
-    SuspensionFixative,
-    TissueFixative,
-    NewCryopreservedTissue,
-    NewFixedBlock,
-    NewFixedTissue,
-    NewFrozenBlock,
-    NewFrozenTissue,
-    NewCryopreservedSuspension,
-    NewFixedOrFreshSuspension,
-    NewFrozenSuspension,
-)
-from scamplepy.query import SpecimenQuery
+import httpx
 
 from utils import (
     date_str_to_eastcoast_9am,
@@ -31,23 +14,9 @@ from utils import (
 )
 
 
-type NewSpecimen = (
-    NewFixedBlock
-    | NewFrozenBlock
-    | NewCryopreservedTissue
-    | NewFixedTissue
-    | NewFrozenTissue
-    | NewCryopreservedSuspension
-    | NewFixedOrFreshSuspension
-    | NewFrozenSuspension
-)
-
-
 def _parse_row(
-    row: dict[str, Any],
-    labs: dict[str, UUID],
-    people: dict[str, UUID],
-) -> NewSpecimen | None:
+    row: dict[str, Any], labs: dict[str, str], people: dict[str, str], empty_fn: str
+) -> dict[str, Any] | None:
     required_keys = {
         "name",
         "date_received",
@@ -57,7 +26,7 @@ def _parse_row(
         "tissue",
     }
 
-    if row_is_empty(row, required_keys):
+    if row_is_empty(row, required_keys, empty_fn):
         return None
 
     data = {
@@ -79,9 +48,10 @@ def _parse_row(
         data["returned_at"] = date_str_to_eastcoast_9am(row["date_returned"])
 
     if row["species"] == "Homo sapiens + Mus musculus (PDX)":
-        data["species"] = [Species.HomoSapiens, Species.MusMusculus]
+        data["species"] = "homo_sapiens"
+        data["host_species"] = "mus_musculus"
     else:
-        data["species"] = [Species(to_snake_case(row["species"]))]
+        data["species"] = to_snake_case(row["species"])
 
     data["additional_data"] = {
         key: row[key]
@@ -98,81 +68,101 @@ def _parse_row(
     preliminary_em = row["embedding_matrix"]
     if preliminary_em is not None:
         data["embedded_in"] = {
-            "CMC": FrozenBlockEmbeddingMatrix.CarboxymethylCellulose,
-            "OCT": FrozenBlockEmbeddingMatrix.OptimalCuttingTemperatureCompound,
+            "CMC": "carboxymethyl_cellulose",
+            "OCT": "optimal_cutting_temperature_compound",
         }.get(preliminary_em)
         if data["embedded_in"] is None:
-            data["embedded_in"] = FixedBlockEmbeddingMatrix(
-                to_snake_case(preliminary_em)
-            )
+            data["embedded_in"] = to_snake_case(preliminary_em)
 
     match (row["type"], row["preservation_method"]):
-        case ("Block" | "Curl", preservation):
-            preservation_to_fixative_and_klass = {
+        case ("Block" | "Curl", preservation) if preservation != "Fresh":
+            preservation_to_fixative_and_type = {
                 "Formaldehyde-derivative fixed": (
-                    BlockFixative.FormaldehydeDerivative,
-                    NewFixedBlock,
+                    "formaldehyde_derivative",
+                    "fixed_block",
                 ),
                 "Formaldehyde-derivative fixed & frozen": (
-                    BlockFixative.FormaldehydeDerivative,
-                    NewFrozenBlock,
+                    "formaldehyde_derivative",
+                    "frozen_block",
                 ),
-                "Frozen": (None, NewFrozenBlock),
+                "Frozen": (None, "frozen_block"),
             }
-            data["fixative"], klass = preservation_to_fixative_and_klass[preservation]
+            data["fixative"], data["type"] = preservation_to_fixative_and_type[
+                preservation
+            ]
 
-            return klass(**data)
+            return data
         case ("Tissue", "Cryopreserved"):
-            return NewCryopreservedTissue(**data)
+            data["type"] = "cryopreserved_tissue"
+
+            return data
         case ("Tissue", "DSP-fixed" | "Scale DSP-Fixed"):
-            return NewFixedTissue(
-                **data, fixative=TissueFixative.DithiobisSuccinimidylpropionate
-            )
+            data["type"] = "fixed_tissue"
+            data["fixative"] = "dithiobis_succinimidylpropionate"
+
+            return data
         case ("Tissue", "Frozen"):
-            return NewFrozenTissue(**data)
+            data["type"] = "frozen_tissue"
+            return data
         case ("Cell Suspension" | "Nucleus Suspension", "Cryopreserved"):
-            return NewCryopreservedSuspension(**data)
+            data["type"] = "cryopreserved_suspension"
+            return data
         case ("Cell Suspension" | "Nucleus Suspension", None):
-            return NewFixedOrFreshSuspension(**data)
+            data["type"] = "fixed_or_fresh_suspension"
+
+            return data
         case (
             "Cell Suspension" | "Nucleus Suspension" | "Cell Pellet" | "Nucleus Pellet",
             "Frozen",
         ):
-            return NewFrozenSuspension(**data)
-        case ("Cell Suspension" | "Nucleus Suspension", preservation):
+            data["type"] = "frozen_suspension"
+            return data
+        case ("Cell Suspension" | "Nucleus Suspension", preservation) if (
+            preservation != "Frozen"
+        ):
             fixatives = {
-                "Formaldehyde-derivative fixed": SuspensionFixative.FormaldehydeDerivative,
-                "DSP-fixed": SuspensionFixative.DithiobisSuccinimidylpropionate,
-                "Scale DSP-Fixed": SuspensionFixative.DithiobisSuccinimidylpropionate,
+                "Formaldehyde-derivative fixed": "formaldehyde_derivative",
+                "DSP-fixed": "dithiobis_succinimidylpropionate",
+                "Scale DSP-Fixed": "dithiobis_succinimidylpropionate",
                 "Fresh": None,
             }
             data["fixative"] = fixatives[preservation]
+            data["type"] = "fixed_or_fresh_suspension"
 
-            return NewFixedOrFreshSuspension(**data)
+            return data
         case (ty, preservation):
-            raise ValueError(f"unexpected specimen details: {preservation} {ty}")
+            logging.error(
+                f"unexpected specimen details for specimen {data['readable_id']}: {preservation} {ty}"
+            )
 
 
 async def csv_to_new_specimens(
-    client: ScamplersClient, data: list[dict[str, Any]]
-) -> Generator[NewSpecimen]:
+    client: httpx.AsyncClient,
+    people_url: str,
+    lab_url: str,
+    specimen_url: str,
+    data: list[dict[str, Any]],
+    empty_fn: str,
+) -> Generator[dict[str, Any]]:
     async with asyncio.TaskGroup() as tg:
-        people = tg.create_task(get_person_email_id_map(client))
-        labs = tg.create_task(get_lab_name_id_map(client))
+        people = tg.create_task(get_person_email_id_map(client, people_url))
+        labs = tg.create_task(get_lab_name_id_map(client, lab_url))
 
     people = people.result()
     labs = labs.result()
 
-    new_specimens = (_parse_row(row, labs=labs, people=people) for row in data)
+    new_specimens = (
+        _parse_row(row, labs=labs, people=people, empty_fn=empty_fn) for row in data
+    )
     pre_existing_specimens = {
-        s.info.summary.readable_id
-        for s in await client.list_specimens(SpecimenQuery(limit=99_999))
+        s["readable_id"]
+        for s in (await client.get(specimen_url, params={"limit": 99_999})).json()
     }
 
     new_specimens = (
         spec
         for spec in new_specimens
-        if not (spec is None or spec.inner.readable_id in pre_existing_specimens)
+        if not (spec is None or spec["readable_id"] in pre_existing_specimens)
     )
 
     return new_specimens
