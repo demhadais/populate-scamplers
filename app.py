@@ -71,7 +71,11 @@ async def _update_scamples_api(settings: "Settings"):
     if institutions := settings.institutions:
         data = read_csv(institutions)
         new_institutions = await csv_to_new_institutions(
-            client, institution_url, data, settings.institutions.empty_fn
+            client,
+            institution_url,
+            data,
+            id_key=settings.institutions.id_key,
+            empty_fn=settings.institutions.empty_fn,
         )
 
         responses = await _post_many(
@@ -85,11 +89,20 @@ async def _update_scamples_api(settings: "Settings"):
     if people := settings.people:
         data = read_csv(people)
         new_people = await csv_to_new_people(
-            client, institution_url, people_url, data, settings.people.empty_fn
+            client,
+            institution_url=institution_url,
+            people_url=people_url,
+            data=data,
+            id_key=settings.people.id_key,
+            empty_fn=settings.people.empty_fn,
         )
         responses = await _post_many(client, people_url, new_people)
         _write_errors(
-            responses, errors_dir, lambda pers: pers["email"].replace("@", "at")
+            responses,
+            errors_dir,
+            lambda pers: pers["email"].replace("@", "at")
+            if pers["email"] is not None
+            else "unknown-email",
         )
 
     lab_url = f"{settings.api_base_url}/labs"
@@ -100,6 +113,7 @@ async def _update_scamples_api(settings: "Settings"):
             people_url=people_url,
             lab_url=lab_url,
             data=data,
+            id_key=settings.labs.id_key,
             empty_fn=settings.labs.empty_fn,
         )
         responses = await _post_many(client, lab_url, new_labs)
@@ -114,18 +128,19 @@ async def _update_scamples_api(settings: "Settings"):
             lab_url=lab_url,
             specimen_url=specimen_url,
             data=data,
+            id_key=settings.specimens.id_key,
             empty_fn=settings.specimens.empty_fn,
         )
         request_response_pairs = await _post_many(client, specimen_url, new_specimens)
         _write_errors(request_response_pairs, errors_dir)
 
-    # if specimen_measurements := settings.specimen_measurements:
-    #     data = read_csv(specimen_measurements)
-    #     specimen_updates = await csv_to_new_specimen_measurements(client, data)
-    #     error_path_spec = (errors_dir, lambda upd: upd.id) if errors_dir else None
-    #     await _post_many(
-    #         client.update_specimen, specimen_updates, log_errors, error_path_spec
-    #     )
+    if specimen_measurements := settings.specimen_measurements:
+        data = read_csv(specimen_measurements)
+        specimen_updates = await csv_to_new_specimen_measurements(client, data)
+        error_path_spec = (errors_dir, lambda upd: upd.id) if errors_dir else None
+        await _post_many(
+            client.update_specimen, specimen_updates, log_errors, error_path_spec
+        )
 
     # if suspensions := settings.suspensions:
     #     data = read_csv(suspensions)

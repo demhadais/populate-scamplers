@@ -1,6 +1,5 @@
 import csv
 import datetime
-import logging
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from types import NoneType
@@ -75,7 +74,8 @@ class CsvSpec(BaseModel):
     head_row: int = 0
     onedrive_file_id: str | None = None
     field_renaming: dict[str, str] = {}
-    empty_fn: str = "lambda d: False"
+    id_key: str = "readable_id"
+    empty_fn: str = "lambda row: False"
 
 
 def read_csv(spec: CsvSpec) -> list[dict[str, Any]]:
@@ -95,24 +95,16 @@ def read_csv(spec: CsvSpec) -> list[dict[str, Any]]:
 def row_is_empty(
     row: dict[str, Any],
     required_keys: set[str],
+    id_key: str,
     empty_fn: str,
 ) -> bool:
+    # Rows that are partially empty (meaning they lack some of the required keys) are allowed to pass through so that
+    # the API catches them and tells us what's wrong
     is_empty1 = all(row[key] is None for key in required_keys)
     parsed_empty_fn: Callable[[dict[str, Any]], bool] = eval(empty_fn)
     is_empty2 = parsed_empty_fn(row)
 
-    if is_empty1 or is_empty2:
-        return True
-
-    is_partially_empty = any(row[key] is None for key in required_keys)
-
-    if is_partially_empty:
-        logging.warning(
-            f"skipping partially empty row (required keys: {required_keys}):\n {row}"
-        )
-        return True
-
-    return False
+    return is_empty1 or is_empty2
 
 
 async def get_lab_name_id_map(

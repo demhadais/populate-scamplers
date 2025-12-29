@@ -7,20 +7,18 @@ from utils import property_id_map, row_is_empty
 
 
 def _parse_row(
-    row: dict[str, Any], institution_domains: dict[str, str], empty_fn: str
+    row: dict[str, Any], institution_domains: dict[str, str], id_key: str, empty_fn: str
 ) -> dict[str, Any] | None:
     required_keys = {"name", "email"}
-    # This is required because of the Excel formula that creates a person's name
-    if row["name"] == " ":
-        row["name"] = None
 
-    if row_is_empty(row, required_keys, empty_fn):
+    if row_is_empty(row, required_keys, id_key=id_key, empty_fn=empty_fn):
         return None
 
+    required_keys = {"name", "email"}
     data = {key: row[key] for key in required_keys}
 
-    email_domain = row["email"].split("@")[-1]
-    data["institution_id"] = institution_domains[email_domain]
+    email_domain = row["email"].split("@")[-1] if row["email"] is not None else ""
+    data["institution_id"] = institution_domains.get(email_domain)
 
     microsoft_entra_oid_key = "microsoft_entra_oid"
     if microsoft_entra_oid := row[microsoft_entra_oid_key]:
@@ -63,10 +61,14 @@ async def csv_to_new_people(
     institution_url: str,
     people_url: str,
     data: list[dict[str, Any]],
+    id_key: str,
     empty_fn: str,
 ) -> Generator[dict[str, Any]]:
     institution_domains = await _email_domain_institution_map(client, institution_url)
-    new_people = (_parse_row(row, institution_domains, empty_fn) for row in data)
+    new_people = (
+        _parse_row(row, institution_domains, id_key=id_key, empty_fn=empty_fn)
+        for row in data
+    )
     pre_existing_people = {
         p["email"]
         for p in (await client.get(people_url, params={"limit": 1_000})).json()

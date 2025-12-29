@@ -1,20 +1,9 @@
 import asyncio
-from datetime import datetime
 import logging
-from typing import Any
 from collections.abc import Generator
+from datetime import datetime
+from typing import Any
 from uuid import UUID
-from scamplepy import ScamplersClient
-from scamplepy.common import (
-    BiologicalMaterial,
-    CellCountingMethod,
-    SuspensionMeasurementFields,
-    VolumeUnit,
-)
-from scamplepy.create import NewSuspension, NewSuspensionMeasurement
-from scamplepy.common import LengthUnit
-from scamplepy.query import SpecimenQuery, SuspensionQuery
-from scamplepy.responses import Specimen
 
 from utils import (
     date_str_to_eastcoast_9am,
@@ -30,10 +19,10 @@ def _parse_concentration(
     row: dict[str, Any],
     value_key: str,
     measured_at: datetime,
-    biological_material: BiologicalMaterial | None = None,
+    biological_material: str | None = None,
     instrument_name: str | None = None,
     counting_method: str | None = None,
-) -> SuspensionMeasurementFields.Concentration | None:
+) -> dict[str, Any] | None:
     if value := row[value_key]:
         value = str_to_float(value)
     else:

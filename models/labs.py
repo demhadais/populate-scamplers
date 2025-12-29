@@ -11,12 +11,13 @@ from utils import (
 )
 
 
-def _parse_row(row: dict[str, Any], people: dict[str, str], empty_fn: str):
+def _parse_row(row: dict[str, Any], people: dict[str, str], id_key: str, empty_fn: str):
     required_keys = {"name", "pi_email", "delivery_dir"}
 
-    if row_is_empty(row, required_keys, empty_fn):
+    if row_is_empty(row, required_keys, id_key=id_key, empty_fn=empty_fn):
         return None
 
+    required_keys = {"name", "pi_email", "delivery_dir"}
     data = {key: row[key] for key in required_keys - {"pi_email"}}
     data["pi_id"] = people[row["pi_email"].lower()]
 
@@ -28,6 +29,7 @@ async def csv_to_new_labs(
     people_url: str,
     lab_url: str,
     data: list[dict[str, Any]],
+    id_key: str,
     empty_fn: str,
 ) -> Generator[dict[str, Any]]:
     async with asyncio.TaskGroup() as tg:
@@ -37,7 +39,9 @@ async def csv_to_new_labs(
     people = people.result()
     pre_existing_labs = pre_existing_labs.result()
 
-    new_labs = (_parse_row(row, people, empty_fn) for row in data)
+    new_labs = (
+        _parse_row(row, people, id_key=id_key, empty_fn=empty_fn) for row in data
+    )
 
     new_labs = (
         lab for lab in new_labs if not (lab is None or lab["name"] in pre_existing_labs)

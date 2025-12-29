@@ -6,10 +6,12 @@ import httpx
 from utils import row_is_empty
 
 
-def _parse_row(row: dict[str, Any], empty_fn: str) -> dict[str, Any] | None:
+def _parse_row(
+    row: dict[str, Any], id_key: str, empty_fn: str
+) -> dict[str, Any] | None:
     required_keys = {"id", "name"}
 
-    if row_is_empty(row, required_keys, empty_fn):
+    if row_is_empty(row, required_keys, id_key=id_key, empty_fn=empty_fn):
         return None
 
     data = {key: row[key] for key in ["id", "name"]}
@@ -30,12 +32,15 @@ async def csv_to_new_institutions(
     client: httpx.AsyncClient,
     institutions_url: str,
     data: list[dict[str, Any]],
+    id_key: str,
     empty_fn: str,
 ) -> Generator[dict[str, Any]]:
     pre_existing_institutions = {
         inst["id"] for inst in (await client.get(institutions_url)).json()
     }
-    new_institutions = (_parse_row(row, empty_fn) for row in data)
+    new_institutions = (
+        _parse_row(row, id_key=id_key, empty_fn=empty_fn) for row in data
+    )
     new_institutions = (
         inst
         for inst in new_institutions

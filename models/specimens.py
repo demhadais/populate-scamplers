@@ -1,5 +1,4 @@
 import asyncio
-import logging
 from collections.abc import Generator
 from typing import Any
 
@@ -15,7 +14,11 @@ from utils import (
 
 
 def _parse_row(
-    row: dict[str, Any], labs: dict[str, str], people: dict[str, str], empty_fn: str
+    row: dict[str, Any],
+    labs: dict[str, str],
+    people: dict[str, str],
+    id_key: str,
+    empty_fn: str,
 ) -> dict[str, Any] | None:
     required_keys = {
         "name",
@@ -26,18 +29,22 @@ def _parse_row(
         "tissue",
     }
 
-    if row_is_empty(row, required_keys, empty_fn):
+    if row_is_empty(row, required_keys, id_key=id_key, empty_fn=empty_fn):
         return None
 
     data = {
         simple_key: row[simple_key] for simple_key in ["name", "readable_id", "tissue"]
     }
 
-    data["lab_id"] = labs[row["lab_name"]]
+    data["lab_id"] = labs.get(row["lab_name"])
 
-    data["submitted_by"] = people[row["submitter_email"].lower()]
+    if submitter_email := row["submitter_email"]:
+        data["submitted_by"] = people[submitter_email.lower()]
 
-    data["received_at"] = date_str_to_eastcoast_9am(row["date_received"])
+    try:
+        data["received_at"] = date_str_to_eastcoast_9am(row["date_received"])
+    except TypeError:
+        pass
 
     data["returned_by"] = None
 
@@ -50,7 +57,7 @@ def _parse_row(
     if row["species"] == "Homo sapiens + Mus musculus (PDX)":
         data["species"] = "homo_sapiens"
         data["host_species"] = "mus_musculus"
-    else:
+    elif row["species"]:
         data["species"] = to_snake_case(row["species"])
 
     data["additional_data"] = {
@@ -90,33 +97,22 @@ def _parse_row(
             data["fixative"], data["type"] = preservation_to_fixative_and_type[
                 preservation
             ]
-
-            return data
         case ("Tissue", "Cryopreserved"):
             data["type"] = "cryopreserved_tissue"
-
-            return data
         case ("Tissue", "DSP-fixed" | "Scale DSP-Fixed"):
             data["type"] = "fixed_tissue"
             data["fixative"] = "dithiobis_succinimidylpropionate"
-
-            return data
         case ("Tissue", "Frozen"):
             data["type"] = "frozen_tissue"
-            return data
         case ("Cell Suspension" | "Nucleus Suspension", "Cryopreserved"):
             data["type"] = "cryopreserved_suspension"
-            return data
         case ("Cell Suspension" | "Nucleus Suspension", None):
             data["type"] = "fixed_or_fresh_suspension"
-
-            return data
         case (
             "Cell Suspension" | "Nucleus Suspension" | "Cell Pellet" | "Nucleus Pellet",
             "Frozen",
         ):
             data["type"] = "frozen_suspension"
-            return data
         case ("Cell Suspension" | "Nucleus Suspension", preservation) if (
             preservation != "Frozen"
         ):
@@ -124,16 +120,15 @@ def _parse_row(
                 "Formaldehyde-derivative fixed": "formaldehyde_derivative",
                 "DSP-fixed": "dithiobis_succinimidylpropionate",
                 "Scale DSP-Fixed": "dithiobis_succinimidylpropionate",
-                "Fresh": None,
             }
-            data["fixative"] = fixatives[preservation]
-            data["type"] = "fixed_or_fresh_suspension"
+            try:
+                data["fixative"] = fixatives[preservation]
+                data["type"] = "fixed_suspension"
+            except KeyError:
+                if preservation == "Fresh":
+                    data["type"] = "fresh_suspension"
 
-            return data
-        case (ty, preservation):
-            logging.error(
-                f"unexpected specimen details for specimen {data['readable_id']}: {preservation} {ty}"
-            )
+    return data
 
 
 async def csv_to_new_specimens(
@@ -142,6 +137,7 @@ async def csv_to_new_specimens(
     lab_url: str,
     specimen_url: str,
     data: list[dict[str, Any]],
+    id_key: str,
     empty_fn: str,
 ) -> Generator[dict[str, Any]]:
     async with asyncio.TaskGroup() as tg:
@@ -152,7 +148,8 @@ async def csv_to_new_specimens(
     labs = labs.result()
 
     new_specimens = (
-        _parse_row(row, labs=labs, people=people, empty_fn=empty_fn) for row in data
+        _parse_row(row, labs=labs, people=people, id_key=id_key, empty_fn=empty_fn)
+        for row in data
     )
     pre_existing_specimens = {
         s["readable_id"]
