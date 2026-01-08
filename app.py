@@ -18,6 +18,7 @@ from models.institutions import (
 )
 from models.labs import csv_to_new_labs
 from models.people import csv_to_new_people
+from models.specimen_measurements import csv_to_new_specimen_measurements
 from models.specimens import csv_to_new_specimens
 from models.suspensions import csv_to_new_suspensions
 from utils import CsvSpec, read_csv, strip_str_values
@@ -135,13 +136,28 @@ async def _update_scamples_api(settings: "Settings"):
         request_response_pairs = await _post_many(client, specimen_url, new_specimens)
         _write_errors(request_response_pairs, errors_dir)
 
-    # if specimen_measurements := settings.specimen_measurements:
-    #     data = read_csv(specimen_measurements)
-    #     specimen_updates = await csv_to_new_specimen_measurements(client, data)
-    #     error_path_spec = (errors_dir, lambda upd: upd.id) if errors_dir else None
-    #     await _post_many(
-    #         client.update_specimen, specimen_updates, log_errors, error_path_spec
-    #     )
+    def specimen_measurement_url_creator(specimen_id: str):
+        return f"{specimen_url}/{specimen_id}/measurements"
+
+    if specimen_measurements := settings.specimen_measurements:
+        data = read_csv(specimen_measurements)
+        new_specimen_measurements = await csv_to_new_specimen_measurements(
+            client,
+            specimen_url=specimen_url,
+            people_url=people_url,
+            specimen_measurement_url_creator=specimen_measurement_url_creator,
+            data=data,
+            id_key=settings.specimen_measurements.id_key,
+            empty_fn=settings.specimen_measurements.empty_fn,
+        )
+        request_response_pairs = []
+        for specimen_id, measurement_set in new_specimen_measurements:
+            for pair in await _post_many(
+                client, specimen_measurement_url_creator(specimen_id), [measurement_set]
+            ):
+                request_response_pairs.append(pair)
+
+        _write_errors(request_response_pairs, errors_dir)
 
     suspensions_url = f"{settings.api_base_url}/suspensions"
     multiplexing_tags_url = f"{settings.api_base_url}/multiplexing-tags"

@@ -1,35 +1,33 @@
+from datetime import datetime
+from typing import Any
+
+from utils import date_str_to_eastcoast_9am, str_to_float, to_snake_case
+
+
 def _parse_concentration(
     row: dict[str, Any],
     value_key: str,
-    measured_at: datetime,
     biological_material: str | None = None,
-    instrument_name: str | None = None,
     counting_method: str | None = None,
+    denonimator_unit: str | None = None,
 ) -> dict[str, Any] | None:
+    parsed_concentration: dict[str, Any] = {"quantity": "concentration"}
     if value := row[value_key]:
-        value = str_to_float(value)
+        parsed_concentration["value"] = str_to_float(value)
     else:
         return None
 
     if counting_method is not None:
-        parsed_counting_method = CellCountingMethod(to_snake_case(counting_method))
-    else:
-        parsed_counting_method = None
+        parsed_concentration["counting_method"] = to_snake_case(counting_method)
 
     if biological_material is None:
-        biological_material = BiologicalMaterial(
-            to_snake_case(row["biological_material"])
+        parsed_concentration["numerator_unit"] = to_snake_case(
+            row["biological_material"]
         )
 
-    unit = (biological_material, VolumeUnit.Millliter)
+    parsed_concentration["denominator_unit"] = denonimator_unit
 
-    return SuspensionMeasurementFields.Concentration(
-        measured_at=measured_at,
-        instrument_name=instrument_name,
-        counting_method=parsed_counting_method,
-        unit=unit,
-        value=value,
-    )
+    return parsed_concentration
 
 
 def _parse_volume(
@@ -91,7 +89,6 @@ def _parse_cell_or_nucleus_diameter(
 def f():
     measurements = []
 
-    cell_counter = row["cell_counter"]
     if date_created := row["date_created"]:
         measured_at = date_str_to_eastcoast_9am(date_created)
     else:
