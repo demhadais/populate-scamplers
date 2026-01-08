@@ -22,11 +22,15 @@ def str_to_float(s: str) -> float:
     return f
 
 
+def str_to_int(s: str) -> int:
+    return int(str_to_float(s))
+
+
 def str_to_bool(s: str) -> bool | None:
     return {"TRUE": True, "FALSE": False}.get(s)
 
 
-def shitty_date_str_to_eastcoast_9am(date_str: str) -> datetime.datetime:
+def _shitty_date_str_to_eastcoast_9am(date_str: str) -> datetime.datetime:
     i_cant_believe_this_is_the_format_month, day, year = (
         date_str.split("-")[0].split("&")[0].split("/")
     )
@@ -40,7 +44,11 @@ def shitty_date_str_to_eastcoast_9am(date_str: str) -> datetime.datetime:
 
 
 def date_str_to_eastcoast_9am(date_str: str) -> datetime.datetime:
-    date = datetime.date.fromisoformat(date_str)
+    try:
+        date = datetime.date.fromisoformat(date_str)
+    except ValueError:
+        date = _shitty_date_str_to_eastcoast_9am(date_str)
+
     return datetime.datetime(
         year=date.year, month=date.month, day=date.day, hour=13, tzinfo=datetime.UTC
     )

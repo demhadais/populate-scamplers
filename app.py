@@ -19,6 +19,7 @@ from models.institutions import (
 from models.labs import csv_to_new_labs
 from models.people import csv_to_new_people
 from models.specimens import csv_to_new_specimens
+from models.suspensions import csv_to_new_suspensions
 from utils import CsvSpec, read_csv, strip_str_values
 
 POPULATE_CELLNOOR = "populate-cellnoor"
@@ -41,7 +42,7 @@ def _write_errors(
     request_response_pairs: list[tuple[dict[str, Any], httpx.Response]],
     error_dir: Path,
     filename_generator: Callable[[dict[str, Any]], str] = lambda d: d.get(
-        "readable_id", d["name"]
+        "readable_id", d.get("name", "ERROR")
     ),
 ):
     for req, resp in (
@@ -134,23 +135,36 @@ async def _update_scamples_api(settings: "Settings"):
         request_response_pairs = await _post_many(client, specimen_url, new_specimens)
         _write_errors(request_response_pairs, errors_dir)
 
-    if specimen_measurements := settings.specimen_measurements:
-        data = read_csv(specimen_measurements)
-        specimen_updates = await csv_to_new_specimen_measurements(client, data)
-        error_path_spec = (errors_dir, lambda upd: upd.id) if errors_dir else None
-        await _post_many(
-            client.update_specimen, specimen_updates, log_errors, error_path_spec
-        )
-
-    # if suspensions := settings.suspensions:
-    #     data = read_csv(suspensions)
-    #     new_suspensions = await csv_to_new_suspensions(client, data, for_pool=False)
-    #     error_path_spec = (
-    #         (errors_dir, lambda susp: susp.readable_id) if errors_dir else None
-    #     )
+    # if specimen_measurements := settings.specimen_measurements:
+    #     data = read_csv(specimen_measurements)
+    #     specimen_updates = await csv_to_new_specimen_measurements(client, data)
+    #     error_path_spec = (errors_dir, lambda upd: upd.id) if errors_dir else None
     #     await _post_many(
-    #         client.create_suspension, new_suspensions, log_errors, error_path_spec
+    #         client.update_specimen, specimen_updates, log_errors, error_path_spec
     #     )
+
+    suspensions_url = f"{settings.api_base_url}/suspensions"
+    multiplexing_tags_url = f"{settings.api_base_url}/multiplexing-tags"
+    if suspensions := settings.suspensions:
+        data = read_csv(suspensions)
+        new_suspensions = await csv_to_new_suspensions(
+            client,
+            people_url=people_url,
+            specimens_url=specimen_url,
+            multiplexing_tags_url=multiplexing_tags_url,
+            suspensions_url=suspensions_url,
+            data=data,
+            id_key=suspensions.id_key,
+            empty_fn=suspensions.empty_fn,
+        )
+        request_response_pairs_cells = await _post_many(
+            client, f"{suspensions_url}/cells", new_suspensions["cells"]
+        )
+        _write_errors(request_response_pairs_cells, errors_dir)
+        request_response_pairs_nuclei = await _post_many(
+            client, f"{suspensions_url}/nuclei", new_suspensions["nuclei"]
+        )
+        _write_errors(request_response_pairs_nuclei, errors_dir)
 
     # if settings.suspension_pools and (
     #     settings.suspensions is None

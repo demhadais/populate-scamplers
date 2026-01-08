@@ -1,9 +1,9 @@
 import asyncio
-import logging
 from collections.abc import Generator
-from datetime import datetime
 from typing import Any
 from uuid import UUID
+
+import httpx
 
 from utils import (
     date_str_to_eastcoast_9am,
@@ -11,119 +11,19 @@ from utils import (
     row_is_empty,
     str_to_bool,
     str_to_float,
+    str_to_int,
     to_snake_case,
 )
 
 
-def _parse_concentration(
-    row: dict[str, Any],
-    value_key: str,
-    measured_at: datetime,
-    biological_material: str | None = None,
-    instrument_name: str | None = None,
-    counting_method: str | None = None,
-) -> dict[str, Any] | None:
-    if value := row[value_key]:
-        value = str_to_float(value)
-    else:
-        return None
-
-    if counting_method is not None:
-        parsed_counting_method = CellCountingMethod(to_snake_case(counting_method))
-    else:
-        parsed_counting_method = None
-
-    if biological_material is None:
-        biological_material = BiologicalMaterial(
-            to_snake_case(row["biological_material"])
-        )
-
-    unit = (biological_material, VolumeUnit.Millliter)
-
-    return SuspensionMeasurementFields.Concentration(
-        measured_at=measured_at,
-        instrument_name=instrument_name,
-        counting_method=parsed_counting_method,
-        unit=unit,
-        value=value,
-    )
-
-
-def _parse_volume(
-    row: dict[str, Any],
-    value_key: str,
-    measured_at: datetime,
-) -> SuspensionMeasurementFields.Volume | None:
-    if value := row[value_key]:
-        value = str_to_float(value)
-    else:
-        return None
-
-    return SuspensionMeasurementFields.Volume(
-        measured_at=measured_at, unit=VolumeUnit.Microliter, value=value
-    )
-
-
-def _parse_viability(
-    row: dict[str, Any],
-    value_key: str,
-    measured_at: datetime,
-    instrument_name: str | None = None,
-) -> SuspensionMeasurementFields.Viability | None:
-    if value := row[value_key]:
-        # Divide by 100 because these values are formatted in a reasonable way (without the percent-sign) so they won't automatically be converted to a decimal inside str_to_float
-        value = str_to_float(value) / 100
-    else:
-        return None
-
-    return SuspensionMeasurementFields.Viability(
-        measured_at=measured_at, instrument_name=instrument_name, value=value
-    )
-
-
-def _parse_cell_or_nucleus_diameter(
-    row: dict[str, Any],
-    value_key: str,
-    measured_at: datetime,
-    biological_material: BiologicalMaterial | None = None,
-    instrument_name: str | None = None,
-) -> SuspensionMeasurementFields.MeanDiameter | None:
-    if value := row[value_key]:
-        value = str_to_float(value)
-    else:
-        return None
-
-    if biological_material is None:
-        biological_material = BiologicalMaterial(
-            to_snake_case(row["biological_material"])
-        )
-
-    unit = (biological_material, LengthUnit.Micrometer)
-
-    return SuspensionMeasurementFields.MeanDiameter(
-        measured_at=measured_at, instrument_name=instrument_name, unit=unit, value=value
-    )
-
-
-def _row_is_ocm(row: dict[str, Any]):
-    multiplexing_tag_id = row["multiplexing_tag_id"]
-    has_multiplexing_tag_id = multiplexing_tag_id is not None
-
-    if not has_multiplexing_tag_id:
-        return False
-    elif multiplexing_tag_id.lower() not in ["ob1", "ob2", "ob3", "ob4"]:
-        return False
-    else:
-        return True
-
-
 def _parse_suspension_row(
     row: dict[str, Any],
-    specimens: dict[str, Specimen],
+    specimens: dict[str, dict[str, Any]],
     people: dict[str, UUID],
     multiplexing_tags: dict[str, UUID],
-    for_pool: bool,
-) -> NewSuspension | None:
+    id_key: str,
+    empty_fn: str,
+) -> dict[str, Any] | None:
     required_keys = {
         "readable_id",
         "parent_specimen_readable_id",
@@ -131,46 +31,24 @@ def _parse_suspension_row(
         "preparer_1_email",
         "target_cell_recovery",
     }
-    is_empty = row_is_empty(row, required_keys, empty_equivalent={"readable_id": ["0"]})
+    is_empty = row_is_empty(row, required_keys, id_key=id_key, empty_fn=empty_fn)
 
     if is_empty:
         return None
 
     data = {key: row[key] for key in ["readable_id"]}
+    parent_specimen = specimens.get(row["parent_specimen_readable_id"])
 
-    # Before everything, check `for_pool` and `pooled_into_id` to determine whether to actually parse this row
-    has_pooled_into_id = row["pooled_into_id"] is not None
-    multiplexing_tag_id = row["multiplexing_tag_id"]
-
-    is_ocm = _row_is_ocm(row)
-
-    if for_pool and is_ocm:
-        return None
-    elif for_pool and not has_pooled_into_id:
-        return None
-    elif for_pool and has_pooled_into_id:
-        data["multiplexing_tag_id"] = multiplexing_tags.get(multiplexing_tag_id)
-    elif is_ocm:
-        data["multiplexing_tag_id"] = multiplexing_tags[multiplexing_tag_id]
-    elif not for_pool and has_pooled_into_id:
-        return None
-
-    try:
-        parent_specimen = specimens[row["parent_specimen_readable_id"]]
-    except KeyError:
-        logging.warning(
-            f"skipping {row['readable_id']}: parent specimen {row['parent_specimen_readable_id']} not found"
-        )
-        return None
-
-    data["parent_specimen_id"] = parent_specimen.info.id_
+    if parent_specimen is not None:
+        data["parent_specimen_id"] = parent_specimen["id"]
 
     if date_created := row["date_created"]:
         data["created_at"] = date_str_to_eastcoast_9am(date_created)
 
-    data["biological_material"] = BiologicalMaterial(
-        to_snake_case(row["biological_material"])
-    )
+    try:
+        data["biological_material"] = to_snake_case(row["biological_material"])
+    except AttributeError:
+        raise ValueError(f"no biological material supplied for {data['readable_id']}")
 
     data["preparer_ids"] = [
         people[row[key]]
@@ -178,7 +56,8 @@ def _parse_suspension_row(
         if row[key] is not None
     ]
 
-    data["target_cell_recovery"] = str_to_float(row["target_cell_recovery"])
+    if target_cell_recovery := row["target_cell_recovery"]:
+        data["target_cell_recovery"] = str_to_int(target_cell_recovery)
 
     if lysis_duration := row["lysis_duration_minutes"]:
         data["lysis_duration_minutes"] = str_to_float(lysis_duration)
@@ -187,181 +66,40 @@ def _parse_suspension_row(
     for key in ["fails_quality_control", "filtered_more_than_once"]:
         data["additional_data"][key] = str_to_bool(row[key])
 
-    data["measurements"] = []
-
-    cell_counter = row["cell_counter"]
-    if date_created := row["date_created"]:
-        measured_at = date_str_to_eastcoast_9am(date_created)
-    else:
-        measured_at = parent_specimen.info.summary.received_at
-
-    measured_by_for_customer_measurement = parent_specimen.info.submitted_by.id
-    measured_by_for_scbl_measurement = data["preparer_ids"][0]
-
-    concentrations = [
-        (
-            "customer_cell/nucleus_concentration_(cell-nucleus/ml)",
-            None,
-            None,
-            measured_by_for_customer_measurement,
-            False,
-        ),
-        (
-            "scbl_cell/nucleus_concentration_(cell-nucleus/ml)",
-            cell_counter,
-            row["counting_method"],
-            measured_by_for_scbl_measurement,
-            False,
-        ),
-        (
-            "scbl_cell/nucleus_concentration_(post-adjustment)_(cell-nucleus/ml)",
-            cell_counter,
-            row["counting_method"],
-            measured_by_for_scbl_measurement,
-            False,
-        ),
-        (
-            "post-hybridization_cell/nucleus_concentration_(cell-nucleus/ml)",
-            cell_counter,
-            row["counting_method"],
-            measured_by_for_scbl_measurement,
-            True,
-        ),
-    ]
-    for (
-        key,
-        instrument_name,
-        counting_method,
-        measured_by,
-        is_post_probe_hybridization,
-    ) in concentrations:
-        if measurement_data := _parse_concentration(
-            row,
-            value_key=key,
-            instrument_name=instrument_name,
-            counting_method=counting_method,
-            measured_at=measured_at,
-        ):
-            measurement = NewSuspensionMeasurement(
-                measured_by=measured_by,
-                data=measurement_data,
-                is_post_probe_hybridization=is_post_probe_hybridization,
-            )
-            data["measurements"].append(measurement)
-
-    volumes = [
-        (
-            "customer_volume_(µl)",
-            measured_by_for_customer_measurement,
-            False,
-        ),
-        ("scbl_volume_(µl)", measured_by_for_scbl_measurement, False),
-        ("scbl_volume_(post-adjustment)_(µl)", measured_by_for_scbl_measurement, False),
-        (
-            "post-hybridization_volume_(µl)",
-            measured_by_for_scbl_measurement,
-            True,
-        ),
-    ]
-    for key, measured_by, is_post_probe_hybridization in volumes:
-        if measurement_data := _parse_volume(
-            row, value_key=key, measured_at=measured_at
-        ):
-            measurement = NewSuspensionMeasurement(
-                measured_by=measured_by,
-                data=measurement_data,
-                is_post_probe_hybridization=is_post_probe_hybridization,
-            )
-            data["measurements"].append(measurement)
-
-    viabilities = [
-        (
-            "customer_cell_viability_(%)",
-            None,
-            measured_by_for_customer_measurement,
-            False,
-        ),
-        (
-            "scbl_cell_viability_(%)",
-            cell_counter,
-            measured_by_for_scbl_measurement,
-            False,
-        ),
-        (
-            "scbl_cell_viability_(post-adjustment)_(%)",
-            cell_counter,
-            measured_by_for_scbl_measurement,
-            False,
-        ),
-    ]
-    for key, instrument_name, measured_by, is_post_probe_hybridization in viabilities:
-        if measurement_data := _parse_viability(
-            row, value_key=key, instrument_name=instrument_name, measured_at=measured_at
-        ):
-            measurement = NewSuspensionMeasurement(
-                measured_by=measured_by,
-                data=measurement_data,
-                is_post_probe_hybridization=is_post_probe_hybridization,
-            )
-            data["measurements"].append(measurement)
-
-    diameters = [
-        (
-            "scbl_average_cell/nucleus_diameter_(µm)",
-            cell_counter,
-            measured_by_for_scbl_measurement,
-            False,
-        ),
-        (
-            "scbl_average_cell/nucleus_diameter_(post-adjustment)_(µm)",
-            cell_counter,
-            measured_by_for_scbl_measurement,
-            False,
-        ),
-        (
-            "scbl_post-hybridization_average_cell/nucleus_diameter_(µm)",
-            cell_counter,
-            measured_by_for_scbl_measurement,
-            True,
-        ),
-    ]
-    for key, instrument_name, measured_by, is_post_probe_hybridization in diameters:
-        if measurement_data := _parse_cell_or_nucleus_diameter(
-            row, value_key=key, instrument_name=instrument_name, measured_at=measured_at
-        ):
-            measurement = NewSuspensionMeasurement(
-                measured_by=measured_by,
-                data=measurement_data,
-                is_post_probe_hybridization=is_post_probe_hybridization,
-            )
-            data["measurements"].append(measurement)
-
-    return NewSuspension(**data)
+    return data
 
 
 async def csv_to_new_suspensions(
-    client: ScamplersClient, data: list[dict[str, Any]], for_pool: bool
-) -> Generator[NewSuspension]:
+    client: httpx.AsyncClient,
+    people_url: str,
+    specimens_url: str,
+    suspensions_url: str,
+    multiplexing_tags_url: str,
+    data: list[dict[str, Any]],
+    id_key: str,
+    empty_fn: str,
+) -> dict[str, Generator[dict[str, Any]]]:
     async with asyncio.TaskGroup() as tg:
         tasks = [
             tg.create_task(task)
             for task in (
-                get_person_email_id_map(client),
-                client.list_specimens(SpecimenQuery(limit=99_999)),
-                client.list_suspensions(SuspensionQuery(limit=99_999)),
-                client.list_multiplexing_tags(),
+                get_person_email_id_map(client, people_url),
+                client.get(specimens_url, params={"limit": 99_999}),
+                client.get(suspensions_url, params={"limit": 99_999}),
+                client.get(multiplexing_tags_url, params={"limit": 99_999}),
             )
         ]
 
     people, specimens, pre_existing_suspensions, multiplexing_tags = [
         task.result() for task in tasks
     ]
-    specimens = {s.info.summary.readable_id: s for s in specimens}  # pyright: ignore[reportAttributeAccessIssue]
-    pre_existing_suspensions = {
-        s.info.summary.readable_id  # pyright: ignore[reportAttributeAccessIssue]
-        for s in pre_existing_suspensions
-    }
-    multiplexing_tags = {tag.tag_id: tag.id for tag in multiplexing_tags}  # pyright: ignore[reportAttributeAccessIssue]
+    specimens, pre_existing_suspensions, multiplexing_tags = [
+        response.json()  # pyright: ignore[reportAttributeAccessIssue]
+        for response in [specimens, pre_existing_suspensions, multiplexing_tags]
+    ]
+    specimens = {s["readable_id"]: s for s in specimens}
+    pre_existing_suspensions = {s["readable_id"] for s in pre_existing_suspensions}
+    multiplexing_tags = {tag["tag_id"]: tag["id"] for tag in multiplexing_tags}
 
     new_suspensions = (
         _parse_suspension_row(
@@ -369,13 +107,23 @@ async def csv_to_new_suspensions(
             specimens=specimens,  # pyright: ignore[reportArgumentType]
             people=people,  # pyright: ignore[reportArgumentType]
             multiplexing_tags=multiplexing_tags,
-            for_pool=for_pool,
+            id_key=id_key,
+            empty_fn=empty_fn,
         )
         for row in data
     )
 
-    return (
+    new_suspensions = [
         susp
         for susp in new_suspensions
-        if not (susp is None or susp.readable_id in pre_existing_suspensions)
-    )
+        if not (susp is None or susp["readable_id"] in pre_existing_suspensions)
+    ]
+
+    return {
+        "cells": (
+            susp for susp in new_suspensions if susp["biological_material"] == "cells"
+        ),
+        "nuclei": (
+            susp for susp in new_suspensions if susp["biological_material"] == "nuclei"
+        ),
+    }

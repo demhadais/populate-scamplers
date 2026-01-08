@@ -46,9 +46,7 @@ def _parse_row(
     except TypeError:
         pass
 
-    data["returned_by"] = None
-
-    if row["returned_by"] not in (None, "0"):
+    if row["returner_email"] not in (None, "0"):
         data["returned_by"] = people[row["returner_email"]]
 
     if row["date_returned"]:
@@ -83,50 +81,59 @@ def _parse_row(
 
     match (row["type"], row["preservation_method"]):
         case ("Block" | "Curl", preservation) if preservation != "Fresh":
-            preservation_to_fixative_and_type = {
-                "Formaldehyde-derivative fixed": (
-                    "formaldehyde_derivative",
-                    "fixed_block",
-                ),
-                "Formaldehyde-derivative fixed & frozen": (
-                    "formaldehyde_derivative",
-                    "frozen_block",
-                ),
-                "Frozen": (None, "frozen_block"),
+            preservation_to_fixative = {
+                "Formaldehyde-derivative fixed": "formaldehyde_derivative",
+                "Formaldehyde-derivative fixed & frozen": "formaldehyde_derivative",
+                "Frozen": None,
             }
-            data["fixative"], data["type"] = preservation_to_fixative_and_type[
-                preservation
-            ]
+            data["fixative"], data["type"] = (
+                preservation_to_fixative[preservation],
+                "block",
+            )
         case ("Tissue", "Cryopreserved"):
-            data["type"] = "cryopreserved_tissue"
+            data["type"] = "tissue"
+            data["thermal_preservation_method"] = "controlled_rate_freezing"
+            data["preservation_state"] = "thermally_preserved"
         case ("Tissue", "DSP-fixed" | "Scale DSP-Fixed"):
-            data["type"] = "fixed_tissue"
+            data["type"] = "tissue"
             data["fixative"] = "dithiobis_succinimidylpropionate"
+            data["preservation_state"] = "fixed"
+        case ("Tissue", "Fresh" | None):
+            data["type"] = "tissue"
+            data["preservation_state"] = "fresh"
         case ("Tissue", "Frozen"):
-            data["type"] = "frozen_tissue"
+            data["type"] = "tissue"
+            data["thermal_preservation_method"] = "flash_freezing"
+            data["preservation_state"] = "thermally_preserved"
         case ("Cell Suspension" | "Nucleus Suspension", "Cryopreserved"):
-            data["type"] = "cryopreserved_suspension"
-        case ("Cell Suspension" | "Nucleus Suspension", None):
-            data["type"] = "fixed_or_fresh_suspension"
+            data["type"] = "suspension"
+            data["thermal_preservation_method"] = "controlled_rate_freezing"
+            data["preservation_state"] = "thermally_preserved"
         case (
             "Cell Suspension" | "Nucleus Suspension" | "Cell Pellet" | "Nucleus Pellet",
             "Frozen",
         ):
-            data["type"] = "frozen_suspension"
-        case ("Cell Suspension" | "Nucleus Suspension", preservation) if (
-            preservation != "Frozen"
+            data["type"] = "suspension"
+            data["thermal_preservation_method"] = "flash_freezing"
+            data["preservation_state"] = "thermally_preserved"
+        case ("Cell Suspension" | "Nucleus Suspension", "Fresh" | None):
+            data["type"] = "suspension"
+            data["preservation_state"] = "fresh"
+        case (
+            "Cell Suspension" | "Nucleus Suspension" | "Cell Pellet" | "Nucleus Pellet",
+            preservation,
         ):
+            data["type"] = "suspension"
+            data["preservation_state"] = "fixed"
             fixatives = {
                 "Formaldehyde-derivative fixed": "formaldehyde_derivative",
                 "DSP-fixed": "dithiobis_succinimidylpropionate",
                 "Scale DSP-Fixed": "dithiobis_succinimidylpropionate",
+                "Formaldehyde-derivative fixed & frozen": "formaldehyde_derivative",
             }
-            try:
-                data["fixative"] = fixatives[preservation]
-                data["type"] = "fixed_suspension"
-            except KeyError:
-                if preservation == "Fresh":
-                    data["type"] = "fresh_suspension"
+            data["fixative"] = fixatives[preservation]
+        case (ty, preservation_method):
+            data["type"] = f"{ty} {preservation_method}"
 
     return data
 
