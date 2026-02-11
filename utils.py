@@ -1,5 +1,6 @@
 import csv
 import datetime
+import json
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from types import NoneType
@@ -7,6 +8,8 @@ from typing import Any
 
 import httpx
 from pydantic.main import BaseModel
+
+NO_LIMIT_QUERY = {"q": json.dumps({"limit": 999_999})}
 
 
 def to_snake_case(s: str):
@@ -115,10 +118,10 @@ def row_is_empty(
     return is_empty1 or is_empty2
 
 
-async def get_lab_name_id_map(
+async def get_project_name_id_map(
     client: httpx.AsyncClient, labs_url: str
 ) -> dict[str, str]:
-    labs = (await client.get(labs_url, params={"limit": 9_999})).json()
+    labs = (await client.get(labs_url, params=NO_LIMIT_QUERY)).json()
     labs = property_id_map("name", labs)
     labs = labs | {name.lower(): id for name, id in labs.items()}
 
@@ -128,7 +131,7 @@ async def get_lab_name_id_map(
 async def get_person_email_id_map(
     client: httpx.AsyncClient, people_url: str
 ) -> dict[str, str]:
-    people = (await client.get(people_url, params={"limit": 9_999})).json()
+    people = (await client.get(people_url, params=NO_LIMIT_QUERY)).json()
     people = property_id_map("email", people)
     people = people | {email.lower(): id for email, id in people.items()}
 

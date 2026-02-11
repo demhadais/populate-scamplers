@@ -16,8 +16,8 @@ from pydantic_settings import (
 from models.institutions import (
     csv_to_new_institutions,
 )
-from models.labs import csv_to_new_labs
 from models.people import csv_to_new_people
+from models.projects import csv_to_new_projects
 from models.specimen_measurements import csv_to_new_specimen_measurements
 from models.specimens import csv_to_new_specimens
 from models.suspensions import csv_to_new_suspensions
@@ -59,8 +59,12 @@ def _write_errors(
             if error_path.exists():
                 infix += 1
 
-        to_write = resp.json()
-        to_write["request"] = req
+        try:
+            response_body = resp.json()
+        except Exception:
+            response_body = resp.text
+
+        to_write = {"request": req, "response": response_body}
         error_path.write_text(json.dumps(to_write))
 
 
@@ -102,24 +106,27 @@ async def _update_scamples_api(settings: "Settings"):
         _write_errors(
             responses,
             errors_dir,
-            lambda pers: pers["email"].replace("@", "at")
-            if pers["email"] is not None
-            else "unknown-email",
+            lambda pers: (
+                pers["email"].replace("@", "at")
+                if pers["email"] is not None
+                else "unknown-email"
+            ),
         )
 
-    lab_url = f"{settings.api_base_url}/labs"
+    project_url = f"{settings.api_base_url}/projects"
     if labs := settings.labs:
         data = read_csv(labs)
-        new_labs = await csv_to_new_labs(
+        new_projects = await csv_to_new_projects(
             client,
-            people_url=people_url,
-            lab_url=lab_url,
+            project_url=project_url,
             data=data,
             id_key=settings.labs.id_key,
             empty_fn=settings.labs.empty_fn,
         )
-        responses = await _post_many(client, lab_url, new_labs)
-        _write_errors(responses, errors_dir, lambda lab: lab["name"].replace(" ", ""))
+        responses = await _post_many(client, project_url, new_projects)
+        _write_errors(
+            responses, errors_dir, lambda project: project["name"].replace(" ", "")
+        )
 
     specimen_url = f"{settings.api_base_url}/specimens"
     if specimens := settings.specimens:
@@ -127,7 +134,7 @@ async def _update_scamples_api(settings: "Settings"):
         new_specimens = await csv_to_new_specimens(
             client,
             people_url=people_url,
-            lab_url=lab_url,
+            project_url=project_url,
             specimen_url=specimen_url,
             data=data,
             id_key=settings.specimens.id_key,
@@ -173,14 +180,10 @@ async def _update_scamples_api(settings: "Settings"):
             id_key=suspensions.id_key,
             empty_fn=suspensions.empty_fn,
         )
-        request_response_pairs_cells = await _post_many(
-            client, f"{suspensions_url}/cells", new_suspensions["cells"]
+        request_response_pairs = await _post_many(
+            client, f"{suspensions_url}", new_suspensions
         )
-        _write_errors(request_response_pairs_cells, errors_dir)
-        request_response_pairs_nuclei = await _post_many(
-            client, f"{suspensions_url}/nuclei", new_suspensions["nuclei"]
-        )
-        _write_errors(request_response_pairs_nuclei, errors_dir)
+        _write_errors(request_response_pairs, errors_dir)
 
     # if settings.suspension_pools and (
     #     settings.suspensions is None

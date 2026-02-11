@@ -6,6 +6,7 @@ from uuid import UUID
 import httpx
 
 from utils import (
+    NO_LIMIT_QUERY,
     date_str_to_eastcoast_9am,
     get_person_email_id_map,
     row_is_empty,
@@ -20,7 +21,6 @@ def _parse_suspension_row(
     row: dict[str, Any],
     specimens: dict[str, dict[str, Any]],
     people: dict[str, UUID],
-    multiplexing_tags: dict[str, UUID],
     id_key: str,
     empty_fn: str,
 ) -> dict[str, Any] | None:
@@ -46,7 +46,9 @@ def _parse_suspension_row(
         data["created_at"] = date_str_to_eastcoast_9am(date_created)
 
     try:
-        data["biological_material"] = to_snake_case(row["biological_material"])
+        data["content"] = {"cells": "cell", "nuclei": "nucleus"}[
+            to_snake_case(row["biological_material"])
+        ]
     except AttributeError:
         raise ValueError(f"no biological material supplied for {data['readable_id']}")
 
@@ -78,15 +80,15 @@ async def csv_to_new_suspensions(
     data: list[dict[str, Any]],
     id_key: str,
     empty_fn: str,
-) -> dict[str, Generator[dict[str, Any]]]:
+) -> Generator[dict[str, Any]]:
     async with asyncio.TaskGroup() as tg:
         tasks = [
             tg.create_task(task)
             for task in (
                 get_person_email_id_map(client, people_url),
-                client.get(specimens_url, params={"limit": 99_999}),
-                client.get(suspensions_url, params={"limit": 99_999}),
-                client.get(multiplexing_tags_url, params={"limit": 99_999}),
+                client.get(specimens_url, params=NO_LIMIT_QUERY),
+                client.get(suspensions_url, params=NO_LIMIT_QUERY),
+                client.get(multiplexing_tags_url, params=NO_LIMIT_QUERY),
             )
         ]
 
@@ -106,24 +108,16 @@ async def csv_to_new_suspensions(
             row,
             specimens=specimens,  # pyright: ignore[reportArgumentType]
             people=people,  # pyright: ignore[reportArgumentType]
-            multiplexing_tags=multiplexing_tags,
             id_key=id_key,
             empty_fn=empty_fn,
         )
         for row in data
     )
 
-    new_suspensions = [
+    new_suspensions = (
         susp
         for susp in new_suspensions
         if not (susp is None or susp["readable_id"] in pre_existing_suspensions)
-    ]
+    )
 
-    return {
-        "cells": (
-            susp for susp in new_suspensions if susp["biological_material"] == "cells"
-        ),
-        "nuclei": (
-            susp for susp in new_suspensions if susp["biological_material"] == "nuclei"
-        ),
-    }
+    return new_suspensions

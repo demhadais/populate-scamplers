@@ -3,7 +3,7 @@ from typing import Any
 
 import httpx
 
-from utils import property_id_map, row_is_empty
+from utils import NO_LIMIT_QUERY, property_id_map, row_is_empty
 
 
 def _parse_row(
@@ -70,8 +70,7 @@ async def csv_to_new_people(
         for row in data
     )
     pre_existing_people = {
-        p["email"]
-        for p in (await client.get(people_url, params={"limit": 1_000})).json()
+        p["email"] for p in (await client.get(people_url, params=NO_LIMIT_QUERY)).json()
     }
     pre_existing_people = pre_existing_people | {
         email.lower() for email in pre_existing_people if email is not None

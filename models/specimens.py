@@ -5,9 +5,10 @@ from typing import Any
 import httpx
 
 from utils import (
+    NO_LIMIT_QUERY,
     date_str_to_eastcoast_9am,
-    get_lab_name_id_map,
     get_person_email_id_map,
+    get_project_name_id_map,
     row_is_empty,
     to_snake_case,
 )
@@ -15,7 +16,7 @@ from utils import (
 
 def _parse_row(
     row: dict[str, Any],
-    labs: dict[str, str],
+    projects: dict[str, str],
     people: dict[str, str],
     id_key: str,
     empty_fn: str,
@@ -36,7 +37,7 @@ def _parse_row(
         simple_key: row[simple_key] for simple_key in ["name", "readable_id", "tissue"]
     }
 
-    data["lab_id"] = labs.get(row["lab_name"])
+    data["project_id"] = projects.get(row["lab_name"])
 
     if submitter_email := row["submitter_email"]:
         data["submitted_by"] = people[submitter_email.lower()]
@@ -141,7 +142,7 @@ def _parse_row(
 async def csv_to_new_specimens(
     client: httpx.AsyncClient,
     people_url: str,
-    lab_url: str,
+    project_url: str,
     specimen_url: str,
     data: list[dict[str, Any]],
     id_key: str,
@@ -149,18 +150,20 @@ async def csv_to_new_specimens(
 ) -> Generator[dict[str, Any]]:
     async with asyncio.TaskGroup() as tg:
         people = tg.create_task(get_person_email_id_map(client, people_url))
-        labs = tg.create_task(get_lab_name_id_map(client, lab_url))
+        projects = tg.create_task(get_project_name_id_map(client, project_url))
 
     people = people.result()
-    labs = labs.result()
+    projects = projects.result()
 
     new_specimens = (
-        _parse_row(row, labs=labs, people=people, id_key=id_key, empty_fn=empty_fn)
+        _parse_row(
+            row, projects=projects, people=people, id_key=id_key, empty_fn=empty_fn
+        )
         for row in data
     )
     pre_existing_specimens = {
         s["readable_id"]
-        for s in (await client.get(specimen_url, params={"limit": 99_999})).json()
+        for s in (await client.get(specimen_url, params=NO_LIMIT_QUERY)).json()
     }
 
     new_specimens = (
