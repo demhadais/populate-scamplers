@@ -66,8 +66,8 @@ def _write_error(
 
     # Since this script, at times, doesn't check for duplication errors, and we don't want to end up with a million
     # errors every time we run, we just skip writing these
-    if response.status_code == 401:
-        return
+    # if response.status_code == 409:
+    #     return
 
     to_write = {
         "request": request,
@@ -230,6 +230,10 @@ async def _update_cellnoor_api(settings: "Settings"):
             data=data,
             client=client,
         )
+        print(len(new_suspension_measurements))
+        total = sum(len(mset) for _, mset in new_suspension_measurements)
+        print(total)
+        print(total / len(new_suspension_measurements))
 
         urls = [
             f"{suspensions_url}/{suspension_id}/measurements"

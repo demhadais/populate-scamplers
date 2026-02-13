@@ -1,9 +1,15 @@
+from datetime import datetime, timedelta
 from typing import Any, Literal
-from uuid import UUID
 
 import httpx
 
-from utils import NO_LIMIT_QUERY, get_person_email_id_map, str_to_float, to_snake_case
+from utils import (
+    NO_LIMIT_QUERY,
+    date_str_to_eastcoast_9am,
+    get_person_email_id_map,
+    str_to_float,
+    to_snake_case,
+)
 
 
 def _parse_concentration(
@@ -11,8 +17,9 @@ def _parse_concentration(
     value_key: str,
     numerator: str | None = None,
     counting_method: str | None = None,
-    denonimator_unit: str | None = None,
 ) -> dict[str, Any] | None:
+    COUNTING_METHODS = {"aopi": "acridine_orange_propidium_iodide"}
+
     parsed_concentration: dict[str, Any] = {"quantity": "concentration"}
     if value := row[value_key]:
         parsed_concentration["value"] = int(str_to_float(value))
@@ -20,14 +27,15 @@ def _parse_concentration(
         return None
 
     if counting_method is not None:
-        parsed_concentration["counting_method"] = to_snake_case(counting_method)
+        counting_method = to_snake_case(counting_method)
+        parsed_concentration["counting_method"] = COUNTING_METHODS.get(
+            counting_method, counting_method
+        )
 
     if numerator is None:
         parsed_concentration["numerator_unit"] = to_snake_case(
             row["biological_material"]
         )
-
-    parsed_concentration["denominator_unit"] = denonimator_unit
 
     return parsed_concentration
 
@@ -44,7 +52,6 @@ def _parse_volume(
     return {
         "quantity": "volume",
         "value": value,
-        "unit": "microliter",
     }
 
 
@@ -92,10 +99,19 @@ def _extract_measurements_from_row(
     measurements = []
     parent_specimen: dict[str, Any] = suspension["parent_specimen"]
 
+    customer_measured_at = parent_specimen["received_at"]
+
     if date_created := suspension["created_at"]:
-        measured_at = date_created
+        first_scbl_measurement_time = date_created
     else:
-        measured_at = parent_specimen["received_at"]
+        first_scbl_measurement_time = date_str_to_eastcoast_9am(
+            row["date_experiment_begun"]
+        ).isoformat()
+
+    second_scbl_measurement_time = first_scbl_measurement_time
+    post_hybridization_measurement_time = datetime.fromisoformat(
+        second_scbl_measurement_time
+    ) + timedelta(days=1)
 
     measured_by_for_customer_measurement = parent_specimen["submitted_by"]
     measured_by_for_scbl_measurement = people[row["preparer_1_email"]]
@@ -104,24 +120,28 @@ def _extract_measurements_from_row(
         (
             "customer_cell/nucleus_concentration_(cell-nucleus/ml)",
             None,
+            customer_measured_at,
             measured_by_for_customer_measurement,
             False,
         ),
         (
             "scbl_cell/nucleus_concentration_(cell-nucleus/ml)",
             row["counting_method"],
+            first_scbl_measurement_time,
             measured_by_for_scbl_measurement,
             False,
         ),
         (
             "scbl_cell/nucleus_concentration_(post-adjustment)_(cell-nucleus/ml)",
             row["counting_method"],
+            second_scbl_measurement_time,
             measured_by_for_scbl_measurement,
             False,
         ),
         (
             "post-hybridization_cell/nucleus_concentration_(cell-nucleus/ml)",
             row["counting_method"],
+            post_hybridization_measurement_time,
             measured_by_for_scbl_measurement,
             True,
         ),
@@ -129,6 +149,7 @@ def _extract_measurements_from_row(
     for (
         key,
         counting_method,
+        measured_at,
         measured_by,
         is_post_probe_hybridization,
     ) in concentrations:
@@ -151,18 +172,30 @@ def _extract_measurements_from_row(
     volumes = [
         (
             "customer_volume_(µl)",
+            customer_measured_at,
             measured_by_for_customer_measurement,
             False,
         ),
-        ("scbl_volume_(µl)", measured_by_for_scbl_measurement, False),
-        ("scbl_volume_(post-adjustment)_(µl)", measured_by_for_scbl_measurement, False),
+        (
+            "scbl_volume_(µl)",
+            first_scbl_measurement_time,
+            measured_by_for_scbl_measurement,
+            False,
+        ),
+        (
+            "scbl_volume_(post-adjustment)_(µl)",
+            second_scbl_measurement_time,
+            measured_by_for_scbl_measurement,
+            False,
+        ),
         (
             "post-hybridization_volume_(µl)",
+            post_hybridization_measurement_time,
             measured_by_for_scbl_measurement,
             True,
         ),
     ]
-    for key, measured_by, is_post_probe_hybridization in volumes:
+    for key, measured_at, measured_by, is_post_probe_hybridization in volumes:
         if measurement_data := _parse_volume(row, value_key=key):
             measurement = {
                 "measured_by": measured_by,
@@ -170,6 +203,7 @@ def _extract_measurements_from_row(
                 "data": measurement_data
                 | {
                     "post_hybridization": is_post_probe_hybridization,
+                    "unit": "microliter",
                 },
             }
             measurements.append(measurement)
@@ -177,21 +211,24 @@ def _extract_measurements_from_row(
     viabilities = [
         (
             "customer_cell_viability_(%)",
+            customer_measured_at,
             measured_by_for_customer_measurement,
             False,
         ),
         (
             "scbl_cell_viability_(%)",
+            first_scbl_measurement_time,
             measured_by_for_scbl_measurement,
             False,
         ),
         (
             "scbl_cell_viability_(post-adjustment)_(%)",
+            second_scbl_measurement_time,
             measured_by_for_scbl_measurement,
             False,
         ),
     ]
-    for key, measured_by, is_post_probe_hybridization in viabilities:
+    for key, measured_at, measured_by, is_post_probe_hybridization in viabilities:
         if measurement_data := _parse_viability(row, value_key=key):
             measurement = {
                 "measured_by": measured_by,
@@ -206,21 +243,24 @@ def _extract_measurements_from_row(
     diameters = [
         (
             "scbl_average_cell/nucleus_diameter_(µm)",
+            first_scbl_measurement_time,
             measured_by_for_scbl_measurement,
             False,
         ),
         (
             "scbl_average_cell/nucleus_diameter_(post-adjustment)_(µm)",
+            second_scbl_measurement_time,
             measured_by_for_scbl_measurement,
             False,
         ),
         (
             "scbl_post-hybridization_average_cell/nucleus_diameter_(µm)",
+            post_hybridization_measurement_time,
             measured_by_for_scbl_measurement,
             True,
         ),
     ]
-    for key, measured_by, is_post_probe_hybridization in diameters:
+    for key, measured_at, measured_by, is_post_probe_hybridization in diameters:
         if measurement_data := _parse_cell_or_nucleus_diameter(
             row,
             value_key=key,
@@ -231,6 +271,7 @@ def _extract_measurements_from_row(
                 "data": measurement_data
                 | {
                     "post_hybridization": is_post_probe_hybridization,
+                    "unit": "micrometer",
                 },
             }
             measurements.append(measurement)
@@ -243,7 +284,7 @@ async def csv_to_suspension_measurements(
     suspensions_url: str,
     data: list[dict[str, Any]],
     client: httpx.AsyncClient,
-) -> list[tuple[UUID, list[dict[str, Any]]]]:
+) -> list[tuple[str, list[dict[str, Any]]]]:
     # I could not care less about making this faster using actual async features. I hate this language and this project
     people = await get_person_email_id_map(client, people_url)
     suspensions = await client.get(suspensions_url, params=NO_LIMIT_QUERY)
@@ -260,11 +301,6 @@ async def csv_to_suspension_measurements(
 
     for row, suspension in relevant_rows_i_hate_python_and_spreadsheets:
         suspension = (await client.get(f"{suspensions_url}/{suspension['id']}")).json()
-        pre_existing_suspension_measurements = (
-            await client.get(f"{suspensions_url}/{suspension['id']}/measurements")
-        ).json()
-        for m in pre_existing_suspension_measurements:
-            del m["id"]
 
         measurement_set = _extract_measurements_from_row(
             row, people=people, suspension=suspension
