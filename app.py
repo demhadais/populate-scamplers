@@ -20,6 +20,7 @@ from models.people import csv_to_new_people
 from models.projects import csv_to_new_projects
 from models.specimen_measurements import csv_to_new_specimen_measurements
 from models.specimens import csv_to_new_specimens
+from models.suspension_measurements import csv_to_suspension_measurements
 from models.suspensions import csv_to_new_suspensions
 from utils import CsvSpec, read_csv, strip_str_values
 
@@ -27,16 +28,56 @@ POPULATE_CELLNOOR = "populate-cellnoor"
 
 
 async def _post_many(
-    client: httpx.AsyncClient, url: str, data: Iterable[dict[str, Any]]
+    client: httpx.AsyncClient, url: list[str] | str, data: Iterable[dict[str, Any]]
 ) -> list[tuple[dict[str, Any], httpx.Response]]:
     stripped_string_data = (strip_str_values(d) for d in data)
     responses = []
     async with asyncio.TaskGroup() as tg:
-        for d in stripped_string_data:
-            task = tg.create_task(client.post(url, json=d))
-            responses.append((d, task))
+        if isinstance(url, str):
+            for request_body in stripped_string_data:
+                task = tg.create_task(client.post(url, json=request_body))
+                responses.append((request_body, task))
+        elif isinstance(url, list):
+            for u, request_body in zip(url, stripped_string_data, strict=True):
+                task = tg.create_task(client.post(u, json=request_body))
+                responses.append((request_body, task))
 
-    return [(d, task.result()) for d, task in responses]
+    return [(request_body, task.result()) for request_body, task in responses]
+
+
+def _write_error(
+    request: dict[str, Any],
+    response: httpx.Response,
+    error_dir: Path,
+    filename_generator: Callable[[dict[str, Any]], str] = lambda d: d.get(
+        "readable_id", d.get("name", "ERROR")
+    ),
+):
+    error_subdir = error_dir / str(filename_generator(request))
+    error_subdir.mkdir(parents=True, exist_ok=True)
+
+    filename = len(list(error_subdir.iterdir()))
+    error_path = error_subdir / Path(f"{filename}.json")
+
+    try:
+        response_body = response.json()
+    except Exception:
+        response_body = response.text
+
+    # Since this script, at times, doesn't check for duplication errors, and we don't want to end up with a million
+    # errors every time we run, we just skip writing these
+    if response.status_code == 401:
+        return
+
+    to_write = {
+        "request": request,
+        "response": {
+            "status": response.status_code,
+            "extracted_body": response_body,
+            "headers": {key: val for key, val in response.headers.items()},
+        },
+    }
+    error_path.write_text(json.dumps(to_write))
 
 
 def _write_errors(
@@ -49,27 +90,18 @@ def _write_errors(
     for req, resp in (
         (req, resp) for req, resp in request_response_pairs if resp.is_error
     ):
-        error_path = (error_dir / str(filename_generator(req))).with_suffix(".json")
-
-        infix = 0
-        while error_path.exists():
-            error_path = error_path.with_name(
-                error_path.stem + f"-{infix}" + error_path.suffix
-            )
-            if error_path.exists():
-                infix += 1
-
-        try:
-            response_body = resp.json()
-        except Exception:
-            response_body = resp.text
-
-        to_write = {"request": req, "response": response_body}
-        error_path.write_text(json.dumps(to_write))
+        _write_error(
+            request=req,
+            response=resp,
+            error_dir=error_dir,
+            filename_generator=filename_generator,
+        )
 
 
-async def _update_scamples_api(settings: "Settings"):
-    client = httpx.AsyncClient(headers={"X-API-Key": settings.api_key}, http2=True)
+async def _update_cellnoor_api(settings: "Settings"):
+    client = httpx.AsyncClient(
+        headers={"Authorization": f"Bearer {settings.api_token}"}, http2=True
+    )
 
     errors_dir = settings.errors_dir
 
@@ -114,14 +146,14 @@ async def _update_scamples_api(settings: "Settings"):
         )
 
     project_url = f"{settings.api_base_url}/projects"
-    if labs := settings.labs:
+    if labs := settings.projects:
         data = read_csv(labs)
         new_projects = await csv_to_new_projects(
             client,
             project_url=project_url,
             data=data,
-            id_key=settings.labs.id_key,
-            empty_fn=settings.labs.empty_fn,
+            id_key=settings.projects.id_key,
+            empty_fn=settings.projects.empty_fn,
         )
         responses = await _post_many(client, project_url, new_projects)
         _write_errors(
@@ -141,6 +173,7 @@ async def _update_scamples_api(settings: "Settings"):
             empty_fn=settings.specimens.empty_fn,
         )
         request_response_pairs = await _post_many(client, specimen_url, new_specimens)
+
         _write_errors(request_response_pairs, errors_dir)
 
     def specimen_measurement_url_creator(specimen_id: str):
@@ -157,14 +190,20 @@ async def _update_scamples_api(settings: "Settings"):
             id_key=settings.specimen_measurements.id_key,
             empty_fn=settings.specimen_measurements.empty_fn,
         )
-        request_response_pairs = []
-        for specimen_id, measurement_set in new_specimen_measurements:
-            for pair in await _post_many(
-                client, specimen_measurement_url_creator(specimen_id), [measurement_set]
-            ):
-                request_response_pairs.append(pair)
+        new_specimen_measurements = list(new_specimen_measurements)
 
-        _write_errors(request_response_pairs, errors_dir)
+        urls = [
+            f"{specimen_url}/{specimen_id}/measurements"
+            for specimen_id, _ in new_specimen_measurements
+        ]
+        data = [measurement for _, measurement in new_specimen_measurements]
+
+        request_response_pairs = await _post_many(client, urls, data)
+        _write_errors(
+            request_response_pairs,
+            errors_dir,
+            filename_generator=lambda _: "specimen-measurements",
+        )
 
     suspensions_url = f"{settings.api_base_url}/suspensions"
     multiplexing_tags_url = f"{settings.api_base_url}/multiplexing-tags"
@@ -184,6 +223,31 @@ async def _update_scamples_api(settings: "Settings"):
             client, f"{suspensions_url}", new_suspensions
         )
         _write_errors(request_response_pairs, errors_dir)
+
+        new_suspension_measurements = await csv_to_suspension_measurements(
+            people_url=people_url,
+            suspensions_url=suspensions_url,
+            data=data,
+            client=client,
+        )
+
+        urls = [
+            f"{suspensions_url}/{suspension_id}/measurements"
+            for suspension_id, measurement_set in new_suspension_measurements
+            for _ in measurement_set
+        ]
+        data = [
+            measurement
+            for _, measurement_set in new_suspension_measurements
+            for measurement in measurement_set
+        ]
+
+        request_response_pairs = await _post_many(client, urls, data)
+        _write_errors(
+            request_response_pairs,
+            errors_dir,
+            filename_generator=lambda _: "suspension-measurements",
+        )
 
     # if settings.suspension_pools and (
     #     settings.suspensions is None
@@ -308,11 +372,11 @@ class Settings(BaseSettings):
 
     config_path: Path = Path.home() / ".config" / POPULATE_CELLNOOR / "settings.toml"
     api_base_url: str
-    api_key: str
+    api_token: str
     accept_invalid_certificates: bool = False
     institutions: CsvSpec | None = None
     people: CsvSpec | None = None
-    labs: CsvSpec | None = None
+    projects: CsvSpec | None = None
     specimens: CsvSpec | None = None
     specimen_measurements: CsvSpec | None = None
     suspensions: CsvSpec | None = None
@@ -346,4 +410,4 @@ class Settings(BaseSettings):
         )
 
     async def cli_cmd(self):
-        await _update_scamples_api(self)
+        await _update_cellnoor_api(self)

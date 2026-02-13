@@ -12,13 +12,13 @@ from utils import (
 
 
 def _parse_row(row: dict[str, Any], id_key: str, empty_fn: str):
-    required_keys = {"name", "delivery_dir"}
+    required_keys = {"name"}
 
     if row_is_empty(row, required_keys, id_key=id_key, empty_fn=empty_fn):
         return None
 
     data = {key: row[key] for key in required_keys}
-    data["started_at"] = datetime(year=2017, month=1, day=1, tzinfo=UTC).isoformat()
+    data["started_at"] = datetime(year=2014, month=1, day=1, tzinfo=UTC).isoformat()
     data["ended_at"] = datetime(
         year=2026, month=12, day=31, hour=23, minute=59, second=59, tzinfo=UTC
     ).isoformat()

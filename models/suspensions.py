@@ -46,9 +46,7 @@ def _parse_suspension_row(
         data["created_at"] = date_str_to_eastcoast_9am(date_created)
 
     try:
-        data["content"] = {"cells": "cell", "nuclei": "nucleus"}[
-            to_snake_case(row["biological_material"])
-        ]
+        data["content"] = to_snake_case(row["biological_material"])
     except AttributeError:
         raise ValueError(f"no biological material supplied for {data['readable_id']}")
 

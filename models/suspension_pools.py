@@ -2,45 +2,37 @@ import asyncio
 from collections.abc import Generator
 from typing import Any
 from uuid import UUID
-from scamplepy import ScamplersClient
-from scamplepy.create import (
-    NewSuspension,
-    NewSuspensionPool,
-    NewSuspensionPoolMeasurement,
-)
-from scamplepy.query import SuspensionPoolQuery
 
-from models.suspensions import (
-    csv_to_new_suspensions,
-    _parse_concentration,
-    _parse_viability,
-    _parse_volume,
-    _parse_cell_or_nucleus_diameter,
-    _row_is_ocm,
-)
+from models.suspensions import csv_to_new_suspensions
 from utils import date_str_to_eastcoast_9am, get_person_email_id_map, row_is_empty
 
 
 def _parse_row(
     row: dict[str, Any],
-    suspensions: dict[str, list[NewSuspension]],
+    suspensions: dict[str, list[dict[str, Any]]],
     people: dict[str, UUID],
+    multiplexing_tags: dict[str, UUID],
     pool_to_gems: dict[str, dict[str, Any]],
-) -> NewSuspensionPool | None:
-    required_keys = {"name", "date_pooled"}
+    id_key: str,
+    empty_fn: str,
+) -> dict[str, Any] | None:
+    required_keys = {"readable_id", "name", "date_pooled"}
 
-    if row_is_empty(
-        row, required_keys, empty_equivalent={"multiplexing_tag_type": ["OCM"]}
-    ):
+    if row_is_empty(row, required_keys, id_key=id_key, empty_fn=empty_fn):
         return None
 
-    data = {
-        key: row[key] for key in (required_keys | {"readable_id"}) - {"date_pooled"}
-    }
+    data = {key: row[key] for key in required_keys - {"date_pooled"}}
 
     # Assign basic information
     data["pooled_at"] = pooled_at = date_str_to_eastcoast_9am(row["date_pooled"])
-    data["suspensions"] = child_suspensions = suspensions[data["readable_id"]]
+    data["suspensions"] = child_suspensions = [
+        {
+            "suspension_id": susp["id"],
+            "tag_id": multiplexing_tags[susp["multiplexing_tag_id"]],
+        }
+        for susp in suspensions[data["readable_id"]]
+        if "ob" not in susp["multiplexing_tag_id"].lower()
+    ]
 
     if not child_suspensions:
         return None
@@ -53,11 +45,11 @@ def _parse_row(
 
     # Prepare the necessary data to construct a concentration
     data["measurements"] = []
-    biological_material = child_suspensions[0].biological_material
+    suspension_content = child_suspensions[0]["content"]
 
     readable_id = data["readable_id"]
 
-    # If no gems was found, it just means it hasn't been run
+    # If no GEMs pool was found, it just means it hasn't been run
     try:
         gems = pool_to_gems[readable_id]
         chip_run_on = date_str_to_eastcoast_9am(gems["date_chip_run"])
@@ -73,7 +65,7 @@ def _parse_row(
     ]
     for key, measured_at in concentrations:
         if measurement_data := _parse_concentration(
-            row, key, biological_material=biological_material, measured_at=measured_at
+            row, key, biological_material=suspension_content, measured_at=measured_at
         ):
             data["measurements"].append(
                 NewSuspensionPoolMeasurement(
@@ -107,7 +99,7 @@ def _parse_row(
     if measurement_data := _parse_cell_or_nucleus_diameter(
         row,
         value_key="average_cell/nucleus_diameter_(µm)",
-        biological_material=biological_material,
+        biological_material=suspension_content,
         measured_at=chip_run_on,
     ):
         data["measurements"].append(
