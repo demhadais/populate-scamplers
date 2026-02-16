@@ -7,6 +7,7 @@ from types import NoneType
 from typing import Any
 
 import httpx
+from pydantic.dataclasses import dataclass
 from pydantic.main import BaseModel
 
 NO_LIMIT_QUERY = {"q": json.dumps({"limit": 999_999})}
@@ -143,6 +144,8 @@ def _strip(value: Any) -> Any:
         return value.strip()
     elif isinstance(value, list):
         return [_strip(inner) for inner in value]
+    elif isinstance(value, dict):
+        return {_strip(key): _strip(val) for key, val in value.items()}
     elif isinstance(value, datetime.datetime):
         return str(value)
     elif isinstance(value, (int, float, bool, NoneType)):
@@ -160,3 +163,12 @@ def strip_str_values(data: dict[str, Any]) -> dict[str, Any]:
             new_dict[key] = _strip(val)
 
     return new_dict
+
+
+@dataclass(kw_only=True, frozen=True)
+class TenxAssaySpec:
+    name: str
+    sample_multiplexing: str
+    chemistry_version: str
+    chromium_chip: str
+    library_types: tuple[str, ...]

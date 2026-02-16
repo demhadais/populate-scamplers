@@ -13,16 +13,20 @@ from pydantic_settings import (
     TomlConfigSettingsSource,
 )
 
+from models.cdna import csv_to_new_cdna
+from models.chromium_runs import csv_to_chromium_runs
 from models.institutions import (
     csv_to_new_institutions,
 )
+from models.libraries import csv_to_new_libraries
 from models.people import csv_to_new_people
 from models.projects import csv_to_new_projects
 from models.specimen_measurements import csv_to_new_specimen_measurements
 from models.specimens import csv_to_new_specimens
 from models.suspension_measurements import csv_to_suspension_measurements
+from models.suspension_pools import csvs_to_new_suspension_pools
 from models.suspensions import csv_to_new_suspensions
-from utils import CsvSpec, read_csv, strip_str_values
+from utils import CsvSpec, TenxAssaySpec, read_csv, strip_str_values
 
 POPULATE_CELLNOOR = "populate-cellnoor"
 
@@ -63,11 +67,6 @@ def _write_error(
         response_body = response.json()
     except Exception:
         response_body = response.text
-
-    # Since this script, at times, doesn't check for duplication errors, and we don't want to end up with a million
-    # errors every time we run, we just skip writing these
-    # if response.status_code == 409:
-    #     return
 
     to_write = {
         "request": request,
@@ -230,10 +229,6 @@ async def _update_cellnoor_api(settings: "Settings"):
             data=data,
             client=client,
         )
-        print(len(new_suspension_measurements))
-        total = sum(len(mset) for _, mset in new_suspension_measurements)
-        print(total)
-        print(total / len(new_suspension_measurements))
 
         urls = [
             f"{suspensions_url}/{suspension_id}/measurements"
@@ -253,89 +248,100 @@ async def _update_cellnoor_api(settings: "Settings"):
             filename_generator=lambda _: "suspension-measurements",
         )
 
-    # if settings.suspension_pools and (
-    #     settings.suspensions is None
-    #     or settings.gems is None
-    #     or settings.gems_suspensions is None
-    # ):
-    #     raise ValueError("cannot specify suspension pools without suspensions")
-    # elif (
-    #     (suspension_pools := settings.suspension_pools)
-    #     and (suspensions := settings.suspensions)
-    #     and (gems := settings.gems)
-    #     and (gems_loading := settings.gems_suspensions)
-    # ):
-    #     suspension_pool_csv, suspensions_csv, gems_csv, gems_loading_csv = (
-    #         read_csv(spec)
-    #         for spec in [suspension_pools, suspensions, gems, gems_loading]
-    #     )
-    #     new_suspension_pools = await csvs_to_new_suspension_pools(
-    #         client,
-    #         suspension_pool_csv,
-    #         suspension_data=suspensions_csv,
-    #         gems_data=gems_csv,
-    #         gems_loading_data=gems_loading_csv,
-    #     )
-    #     error_path_spec = (
-    #         (errors_dir, lambda pool: pool.readable_id) if errors_dir else None
-    #     )
-    #     await _post_many(
-    #         client.create_suspension_pool,
-    #         new_suspension_pools,
-    #         log_errors,
-    #         error_path_spec,
-    #     )
+    if settings.suspension_pools and settings.suspensions is None:
+        raise ValueError("cannot specify suspension pools without suspensions")
 
-    # if settings.gems is not None and settings.gems_suspensions is None:
-    #     raise ValueError("cannot specify GEMs CSV without GEMs-suspensions")
+    suspension_pools_url = f"{settings.api_base_url}/suspension-pools"
+    if settings.suspension_pools:
+        data = read_csv(settings.suspension_pools)
+        new_suspension_pools = await csvs_to_new_suspension_pools(
+            client,
+            people_url=people_url,
+            suspension_pool_url=suspension_pools_url,
+            suspensions_url=suspensions_url,
+            multiplexing_tags_url=multiplexing_tags_url,
+            suspension_pool_data=data,
+            suspension_csv_data=read_csv(settings.suspensions),  # pyright: ignore[reportArgumentType]
+            id_key=settings.suspension_pools.id_key,
+            empty_fn=settings.suspension_pools.empty_fn,
+        )
 
-    # if (gems := settings.gems) and (gems_suspensions := settings.gems_suspensions):
-    #     gems = read_csv(gems)
-    #     gems_suspensions = read_csv(gems_suspensions)
-    #     new_chromium_runs = await csv_to_chromium_runs(client, gems, gems_suspensions)
-    #     error_path_spec = (
-    #         (errors_dir, lambda run: run.inner.readable_id) if errors_dir else None
-    #     )
-    #     await _post_many(
-    #         client.create_chromium_run,
-    #         new_chromium_runs,
-    #         log_errors,
-    #         error_path_spec,
-    #     )
+        request_response_pairs = await _post_many(
+            client, suspension_pools_url, new_suspension_pools
+        )
+        _write_errors(
+            request_response_pairs,
+            errors_dir,
+        )
 
-    # if cdna := settings.cdna:
-    #     data = read_csv(cdna)
-    #     new_cdna = await csv_to_new_cdna(client, data)
+    if settings.gems is None != settings.gems_suspensions is None:
+        raise ValueError("cannot specify GEMs CSV without GEMs-suspensions")
 
-    #     def extract_cdna_group_readable_ids(cdna_group: NewCdnaGroup) -> str:
-    #         match cdna_group:
-    #             case NewCdnaGroup.Single(c):
-    #                 return c.readable_id
-    #             case NewCdnaGroup.Multiple(m) | NewCdnaGroup.OnChipMultiplexing(m):
-    #                 return "-".join(c.readable_id for c in m)
+    tenx_assays_url = f"{settings.api_base_url}/10x-assays"
+    chromium_runs_url = f"{settings.api_base_url}/chromium-runs"
+    if (gems := settings.gems) and (gems_suspensions := settings.gems_suspensions):
+        gems = read_csv(gems)
+        gems_suspensions = read_csv(gems_suspensions)
+        new_chromium_runs = await csv_to_chromium_runs(
+            client,
+            people_url=people_url,
+            suspensions_url=suspensions_url,
+            suspension_pools_url=suspension_pools_url,
+            tenx_assays_url=tenx_assays_url,
+            chromium_runs_url=chromium_runs_url,
+            assay_name_to_spec=settings.assay_map,
+            gem_pools_data=gems,
+            gem_pools_loading_data=gems_suspensions,
+            id_key_for_gem_pools_data=settings.gems.id_key,
+            id_key_for_loading_data=settings.gems_suspensions.id_key,
+            empty_fn_for_gem_pools_data=settings.gems.empty_fn,
+            empty_fn_for_loading_data=settings.gems_suspensions.empty_fn,
+        )
 
-    #     error_path_spec = (
-    #         (errors_dir, extract_cdna_group_readable_ids) if errors_dir else None
-    #     )
-    #     await _post_many(
-    #         client.create_cdna,
-    #         new_cdna,
-    #         log_errors,
-    #         error_path_spec,
-    #     )
+        request_response_pairs = await _post_many(
+            client, chromium_runs_url, new_chromium_runs
+        )
+        _write_errors(request_response_pairs, settings.errors_dir)
 
-    # if libraries := settings.libraries:
-    #     data = read_csv(libraries)
-    #     new_libraries = await csv_to_new_libraries(client, data)
-    #     error_path_spec = (
-    #         (errors_dir, lambda lib: lib.readable_id) if errors_dir else None
-    #     )
-    #     await _post_many(
-    #         client.create_library,
-    #         new_libraries,
-    #         log_errors,
-    #         error_path_spec,
-    #     )
+    cdna_url = f"{settings.api_base_url}/cdna"
+    if cdna := settings.cdna:
+        data = read_csv(cdna)
+        new_cdna = await csv_to_new_cdna(
+            client,
+            cdna_url=cdna_url,
+            gem_pool_url=f"{settings.api_base_url}/gem-pools",
+            people_url=people_url,
+            data=data,
+            id_key=settings.cdna.id_key,
+            empty_fn=settings.cdna.empty_fn,
+        )
+
+        request_response_pairs = await _post_many(
+            client,
+            cdna_url,
+            new_cdna,
+        )
+        _write_errors(request_response_pairs, settings.errors_dir)
+
+    libraries_url = f"{settings.api_base_url}/libraries"
+    if libraries := settings.libraries:
+        data = read_csv(libraries)
+        new_libraries = await csv_to_new_libraries(
+            client,
+            cdna_url=cdna_url,
+            libraries_url=libraries_url,
+            people_url=people_url,
+            data=data,
+            id_key=settings.libraries.id_key,
+            empty_fn=settings.libraries.empty_fn,
+        )
+
+        request_response_pairs = await _post_many(
+            client,
+            libraries_url,
+            new_libraries,
+        )
+        _write_errors(request_response_pairs, settings.errors_dir)
 
     # if sequencing_submissions := settings.sequencing_submissions:
     #     data = read_csv(sequencing_submissions)
@@ -391,6 +397,7 @@ class Settings(BaseSettings):
     libraries: CsvSpec | None = None
     sequencing_submissions: CsvSpec | None = None
     dataset_dirs: CliPositionalArg[list[Path]] = []
+    assay_map: dict[str, TenxAssaySpec]
     dry_run: bool = False
     print_requests: bool = False
     save_requests: Path | None = None
