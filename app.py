@@ -1,5 +1,4 @@
 import asyncio
-import json
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
@@ -14,6 +13,7 @@ from pydantic_settings import (
 )
 
 from models.cdna import csv_to_new_cdna
+from models.chromium_datasets import post_chromium_datasets
 from models.chromium_runs import csv_to_chromium_runs
 from models.institutions import (
     csv_to_new_institutions,
@@ -26,7 +26,7 @@ from models.specimens import csv_to_new_specimens
 from models.suspension_measurements import csv_to_suspension_measurements
 from models.suspension_pools import csvs_to_new_suspension_pools
 from models.suspensions import csv_to_new_suspensions
-from utils import CsvSpec, TenxAssaySpec, read_csv, strip_str_values
+from utils import CsvSpec, TenxAssaySpec, read_csv, strip_str_values, write_error
 
 POPULATE_CELLNOOR = "populate-cellnoor"
 
@@ -49,36 +49,6 @@ async def _post_many(
     return [(request_body, task.result()) for request_body, task in responses]
 
 
-def _write_error(
-    request: dict[str, Any],
-    response: httpx.Response,
-    error_dir: Path,
-    filename_generator: Callable[[dict[str, Any]], str] = lambda d: d.get(
-        "readable_id", d.get("name", "ERROR")
-    ),
-):
-    error_subdir = error_dir / str(filename_generator(request))
-    error_subdir.mkdir(parents=True, exist_ok=True)
-
-    filename = len(list(error_subdir.iterdir()))
-    error_path = error_subdir / Path(f"{filename}.json")
-
-    try:
-        response_body = response.json()
-    except Exception:
-        response_body = response.text
-
-    to_write = {
-        "request": request,
-        "response": {
-            "status": response.status_code,
-            "extracted_body": response_body,
-            "headers": {key: val for key, val in response.headers.items()},
-        },
-    }
-    error_path.write_text(json.dumps(to_write))
-
-
 def _write_errors(
     request_response_pairs: list[tuple[dict[str, Any], httpx.Response]],
     error_dir: Path,
@@ -89,7 +59,7 @@ def _write_errors(
     for req, resp in (
         (req, resp) for req, resp in request_response_pairs if resp.is_error
     ):
-        _write_error(
+        write_error(
             request=req,
             response=resp,
             error_dir=error_dir,
@@ -343,35 +313,27 @@ async def _update_cellnoor_api(settings: "Settings"):
         )
         _write_errors(request_response_pairs, settings.errors_dir)
 
+    # sequencing_runs_url = f"{settings.api_base_url}/sequencing-runs"
     # if sequencing_submissions := settings.sequencing_submissions:
     #     data = read_csv(sequencing_submissions)
-    #     new_sequencing_runs = await csv_to_sequencing_runs(client, data)
-    #     error_path_spec = (
-    #         (
-    #             errors_dir,
-    #             lambda seq_run: "_".join(
-    #                 ilab_id for ilab_id in seq_run.additional_data["ilab_request_ids"]
-    #             ),
-    #         )
-    #         if errors_dir
-    #         else None
-    #     )
-    #     await _post_many(
-    #         client.create_sequencing_run,
-    #         new_sequencing_runs,
-    #         log_errors,
-    #         error_path_spec,
-    #     )
+    #     new_sequencing_runs = await csv_to_new_sequencing_runs(data=data)
 
-    # if dataset_dirs := settings.dataset_dirs:
-    #     chromium_datasets = await parse_chromium_dataset_dirs(client, dataset_dirs)
-    #     error_path_spec = (errors_dir, lambda ds: ds.data_path) if errors_dir else None
-    #     await _post_many(
-    #         client.create_chromium_dataset,
-    #         chromium_datasets,
-    #         log_errors,
-    #         error_path_spec,
+    #     request_response_pairs = await _post_many(
+    #         client,
+    #         sequencing_runs_url,
+    #         new_sequencing_runs,
     #     )
+    #     _write_errors(request_response_pairs, settings.errors_dir)
+
+    chromium_datasets_url = f"{settings.api_base_url}/chromium-datasets"
+    if dataset_dirs := settings.dataset_dirs:
+        await post_chromium_datasets(
+            client,
+            chromium_datasets_url,
+            libraries_url,
+            dataset_dirs,
+            settings.errors_dir,
+        )
 
 
 class Settings(BaseSettings):

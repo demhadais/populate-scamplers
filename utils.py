@@ -165,6 +165,36 @@ def strip_str_values(data: dict[str, Any]) -> dict[str, Any]:
     return new_dict
 
 
+def write_error(
+    request: dict[str, Any],
+    response: httpx.Response,
+    error_dir: Path,
+    filename_generator: Callable[[dict[str, Any]], str] = lambda d: d.get(
+        "readable_id", d.get("name", "ERROR")
+    ),
+):
+    error_subdir = error_dir / str(filename_generator(request))
+    error_subdir.mkdir(parents=True, exist_ok=True)
+
+    filename = len(list(error_subdir.iterdir()))
+    error_path = error_subdir / Path(f"{filename}.json")
+
+    try:
+        response_body = response.json()
+    except Exception:
+        response_body = response.text
+
+    to_write = {
+        "request": request,
+        "response": {
+            "status": response.status_code,
+            "extracted_body": response_body,
+            "headers": {key: val for key, val in response.headers.items()},
+        },
+    }
+    error_path.write_text(json.dumps(to_write))
+
+
 @dataclass(kw_only=True, frozen=True)
 class TenxAssaySpec:
     name: str
