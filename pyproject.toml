@@ -5,10 +5,14 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "httpx[http2]>=0.28.1",
     "pydantic>=2.11.7",
     "pydantic-settings>=2.10.1",
-    "scamplepy",
 ]
 
-[tool.uv.sources]
-scamplepy = { git = "https://github.com/demhadais/scamplers", subdirectory = "rust/scamplepy" }
+[dependency-groups]
+dev = [
+    "pre-commit>=4.3.0",
+    "pyright>=1.1.405",
+    "pytest>=8.4.2",
+]
