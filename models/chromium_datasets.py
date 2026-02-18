@@ -1,6 +1,6 @@
 import asyncio
 import re
-from collections.abc import Generator
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -46,42 +46,39 @@ async def _post_dataset(
 
     dataset_files = list(get_cellranger_output_files(path))
 
-    def to_file_upload(paths: Generator[Path]) -> dict[str, tuple[str, bytes, str]]:
+    def to_file_upload(paths: Iterable[Path]) -> dict[str, tuple[str, bytes, str]]:
         return {
-            f"{path.parent.name}/{path.name}": (
+            f"file{i}": (
                 f"{path.parent.name}/{path.name}",
                 path.read_bytes(),
                 CONTENT_TYPES[path.suffix],
             )
-            for path in paths
+            for i, path in enumerate(paths)
         }
 
-    metrics_files = (fileset.metrics_file for fileset in dataset_files)
-    web_summary_files = (fileset.web_summary_file for fileset in dataset_files)
-
-    metrics_file_uploads = to_file_upload(metrics_files)
-    web_summary_file_uploads = to_file_upload(web_summary_files)
-
-    metrics_response = await client.post(
+    files = (fileset.metrics_file for fileset in dataset_files)
+    files = to_file_upload(files)
+    response = await client.post(
         f"{chromium_datasets_url}/{created_dataset['id']}/metrics",
-        files=metrics_file_uploads,
+        files=files,
     )
-    web_summaries_response = await client.post(
-        f"{chromium_datasets_url}/{created_dataset['id']}/web-summaries",
-        files=web_summary_file_uploads,
-    )
-
-    if metrics_response.is_error:
+    if response.is_error:
         write_error(
             request={"action": "uploaded metrics file"},
-            response=metrics_response,
+            response=response,
             error_dir=error_dir,
         )
 
-    if web_summaries_response.is_error:
+    files = (fileset.web_summary_file for fileset in dataset_files)
+    files = to_file_upload(files)
+    response = await client.post(
+        f"{chromium_datasets_url}/{created_dataset['id']}/web-summaries",
+        files=files,
+    )
+    if response.is_error:
         write_error(
             request={"action": "uploaded web summary file"},
-            response=web_summaries_response,
+            response=response,
             error_dir=error_dir,
         )
 
@@ -105,18 +102,26 @@ async def post_chromium_datasets(
     pre_existing_datasets = pre_existing_datasets.result().json()
     pre_existing_datasets = property_id_map("name", pre_existing_datasets)
 
-    tasks = []
-    async with asyncio.TaskGroup() as tg:
-        for path in dataset_dirs:
-            if path.name in pre_existing_datasets:
-                continue
+    # Let's do it the inefficient way! Woohoo!
+    for path in dataset_dirs:
+        if path.name in pre_existing_datasets:
+            continue
+        await _post_dataset(client, chromium_datasets_url, path, libraries, errors_dir)
 
-            task = tg.create_task(
-                _post_dataset(
-                    client, chromium_datasets_url, path, libraries, errors_dir
-                )
-            )
-            tasks.append(task)
+    # I loathe this language. What the hell about this causes a bug?
 
-    for task in tasks:
-        task.result()
+    # tasks = []
+    # async with asyncio.TaskGroup() as tg:
+    #     for path in dataset_dirs:
+    #         if path.name in pre_existing_datasets:
+    #             continue
+
+    #         task = tg.create_task(
+    #             _post_dataset(
+    #                 client, chromium_datasets_url, path, libraries, errors_dir
+    #             )
+    #         )
+    #         tasks.append(task)
+
+    # for task in tasks:
+    #     task.result()
