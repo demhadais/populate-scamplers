@@ -84,14 +84,14 @@ def _parse_row(
         case ("Block" | "Curl", preservation) if preservation != "Fresh":
             preservation_to_fixative = {
                 "Formaldehyde-derivative fixed": "formaldehyde_derivative",
-                "Formaldehyde-derivative fixed & frozen": "formaldehyde_derivative",
-                "Frozen": None,
+                "Formaldehyde-derivative fixed & flash-frozen (blocks only)": "formaldehyde_derivative",
+                "Flash-frozen": None,
             }
             data["fixative"], data["type"] = (
                 preservation_to_fixative[preservation],
                 "block",
             )
-        case ("Tissue", "Cryopreserved"):
+        case ("Tissue", "Cryopreserved (controlled-rate-freezing)"):
             data["type"] = "tissue"
             data["thermal_preservation_method"] = "controlled_rate_freezing"
             data["preservation_state"] = "thermally_preserved"
@@ -102,20 +102,16 @@ def _parse_row(
         case ("Tissue", "Fresh" | None):
             data["type"] = "tissue"
             data["preservation_state"] = "fresh"
-        case ("Tissue", "Frozen"):
+        case ("Tissue", "Flash-frozen"):
             data["type"] = "tissue"
             data["thermal_preservation_method"] = "flash_freezing"
             data["preservation_state"] = "thermally_preserved"
-        case ("Cell Suspension" | "Nucleus Suspension", "Cryopreserved"):
-            data["type"] = "suspension"
-            data["thermal_preservation_method"] = "controlled_rate_freezing"
-            data["preservation_state"] = "thermally_preserved"
         case (
-            "Cell Suspension" | "Nucleus Suspension" | "Cell Pellet" | "Nucleus Pellet",
-            "Frozen",
+            "Cell Suspension" | "Nucleus Suspension",
+            "Cryopreserved (controlled-rate-freezing)",
         ):
             data["type"] = "suspension"
-            data["thermal_preservation_method"] = "flash_freezing"
+            data["thermal_preservation_method"] = "controlled_rate_freezing"
             data["preservation_state"] = "thermally_preserved"
         case ("Cell Suspension" | "Nucleus Suspension", "Fresh" | None):
             data["type"] = "suspension"
@@ -130,9 +126,8 @@ def _parse_row(
                 "Formaldehyde-derivative fixed": "formaldehyde_derivative",
                 "DSP-fixed": "dithiobis_succinimidylpropionate",
                 "Scale DSP-Fixed": "dithiobis_succinimidylpropionate",
-                "Formaldehyde-derivative fixed & frozen": "formaldehyde_derivative",
             }
-            data["fixative"] = fixatives[preservation]
+            data["fixative"] = fixatives.get(preservation)
         case (ty, preservation_method):
             data["type"] = f"{ty} {preservation_method}"
 

@@ -27,6 +27,10 @@ def get_cmdline_file(dataset_directory: Path) -> Path:
     return cellranger_directory / "_files" / "_cmdline"
 
 
+def get_pipeline_metadata_file(dataset_directory: Path) -> Path:
+    return dataset_directory / "pipeline-metadata.json"
+
+
 @dataclass(frozen=True, kw_only=True)
 class CellrangerOutputFiles:
     metrics_file: Path
@@ -106,6 +110,11 @@ def _copy_dataset_directory(source_dataset_directory: Path, destination: Path):
     shutil.copyfile(
         get_cmdline_file(source_dataset_directory),
         destination_files_directory / "_cmdline",
+    )
+
+    source_pipeline_metadata = get_pipeline_metadata_file(source_dataset_directory)
+    shutil.copyfile(
+        source_pipeline_metadata, destination_directory / source_pipeline_metadata.name
     )
 
     for output_file_set in get_cellranger_output_files(source_dataset_directory):

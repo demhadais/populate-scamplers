@@ -17,6 +17,24 @@ from utils import (
 )
 
 
+def _map_bad_specimens(row: dict[str, Any]) -> dict[str, Any]:
+    map = {
+        "25SP1819": "25SP1794",
+        "25SP1820": "25SP1795",
+        "25SP1821": "25SP1796",
+        "25SP1822": "25SP1797",
+        "25SP1823": "25SP1798",
+        "25SP1824": "25SP1799",
+        "25SP1825": "25SP1800",
+        "25SP1826": "25SP1801",
+    }
+
+    if mapped_parent_specimen_id := map.get(row["parent_specimen_readable_id"]):
+        row["parent_specimen_readable_id"] = mapped_parent_specimen_id
+
+    return row
+
+
 def _parse_suspension_row(
     row: dict[str, Any],
     specimens: dict[str, dict[str, Any]],
@@ -36,7 +54,10 @@ def _parse_suspension_row(
     if is_empty:
         return None
 
+    row = _map_bad_specimens(row)
+
     data = {key: row[key] for key in ["readable_id"]}
+
     parent_specimen = specimens.get(row["parent_specimen_readable_id"])
 
     if parent_specimen is not None:

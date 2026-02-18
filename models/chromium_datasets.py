@@ -1,4 +1,5 @@
 import asyncio
+import json
 import re
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -10,10 +11,20 @@ import httpx
 from copy_chromium_datasets import (
     get_cellranger_output_files,
     get_cmdline_file,
+    get_pipeline_metadata_file,
 )
 from utils import NO_LIMIT_QUERY, property_id_map, write_error
 
 CONTENT_TYPES = {".csv": "text/csv", ".html": "text/html", ".json": "application/json"}
+
+
+def _get_delivered_at(dataset_directory: Path) -> str:
+    pipeline_metadata = get_pipeline_metadata_file(dataset_directory).read_bytes()
+    pipeline_metadata = json.loads(pipeline_metadata)
+    delivered_at = pipeline_metadata["metadata_generated_date"]
+    delivered_at = datetime.fromisoformat(delivered_at).replace(tzinfo=UTC)
+
+    return delivered_at.isoformat()
 
 
 async def _post_dataset(
@@ -31,9 +42,7 @@ async def _post_dataset(
         return None
 
     data: dict[str, Any] = {"name": path.name}
-    data["delivered_at"] = datetime.fromtimestamp(
-        path.stat().st_birthtime, tz=UTC
-    ).isoformat()
+    data["delivered_at"] = _get_delivered_at(path)
     data["library_ids"] = library_ids
     data["cmdline"] = " ".join(get_cmdline_file(path).read_text().split()[0:2])
 
@@ -108,7 +117,7 @@ async def post_chromium_datasets(
             continue
         await _post_dataset(client, chromium_datasets_url, path, libraries, errors_dir)
 
-    # I loathe this language. What the hell about this causes a bug?
+    # I loathe, detest, and despise this language. What the hell about this causes a bug?
 
     # tasks = []
     # async with asyncio.TaskGroup() as tg:

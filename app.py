@@ -69,7 +69,9 @@ def _write_errors(
 
 async def _update_cellnoor_api(settings: "Settings"):
     client = httpx.AsyncClient(
-        headers={"Authorization": f"Bearer {settings.api_token}"}, http2=True
+        headers={"Authorization": f"Bearer {settings.api_token}"},
+        http2=True,
+        verify=False,
     )
 
     errors_dir = settings.errors_dir
