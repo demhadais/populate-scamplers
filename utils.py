@@ -147,7 +147,7 @@ def _strip(value: Any) -> Any:
     elif isinstance(value, dict):
         return {_strip(key): _strip(val) for key, val in value.items()}
     elif isinstance(value, datetime.datetime):
-        return str(value)
+        return value.isoformat()
     elif isinstance(value, (int, float, bool, NoneType)):
         return value
     else:

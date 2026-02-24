@@ -3,7 +3,6 @@ from collections.abc import Generator
 from typing import Any
 
 import httpx
-
 from utils import (
     NO_LIMIT_QUERY,
     date_str_to_eastcoast_9am,
@@ -36,7 +35,7 @@ def _parse_row(
     data["suspensions"] = child_suspensions = [
         {
             "suspension_id": susp["id"],
-            "tag_id": multiplexing_tags[susp["multiplexing_tag_id"]],
+            "tag_id": multiplexing_tags.get(susp["multiplexing_tag_id"]),
         }
         for susp in suspensions[data["readable_id"]]
         if susp["multiplexing_tag_id"] is not None

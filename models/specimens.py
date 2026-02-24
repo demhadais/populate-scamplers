@@ -1,5 +1,7 @@
+# TODO: YOU ARE ALLOWED TO USE VARIABLES
 import asyncio
 from collections.abc import Generator
+from datetime import timedelta
 from typing import Any
 
 import httpx
@@ -53,6 +55,12 @@ def _parse_row(
     if row["date_returned"]:
         data["returned_at"] = date_str_to_eastcoast_9am(row["date_returned"])
 
+    if (
+        data.get("received_at") == data.get("returned_at")
+        and data.get("returned_at") is not None
+    ):
+        data["returned_at"] = data["returned_at"] + timedelta(hours=1)
+
     if row["species"] == "Homo sapiens + Mus musculus (PDX)":
         data["species"] = "homo_sapiens"
         data["host_species"] = "mus_musculus"
@@ -91,7 +99,7 @@ def _parse_row(
                 preservation_to_fixative[preservation],
                 "block",
             )
-        case ("Tissue", "Cryopreserved (controlled-rate-freezing)"):
+        case ("Tissue", "Cryopreserved (controlled-rate freezing)"):
             data["type"] = "tissue"
             data["thermal_preservation_method"] = "controlled_rate_freezing"
             data["preservation_state"] = "thermally_preserved"
@@ -108,7 +116,7 @@ def _parse_row(
             data["preservation_state"] = "thermally_preserved"
         case (
             "Cell Suspension" | "Nucleus Suspension",
-            "Cryopreserved (controlled-rate-freezing)",
+            "Cryopreserved (controlled-rate freezing)",
         ):
             data["type"] = "suspension"
             data["thermal_preservation_method"] = "controlled_rate_freezing"
