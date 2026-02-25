@@ -60,7 +60,8 @@ def _parse_row(
             str_to_float(row["n_amplification_cycles"])
         )
     except AttributeError:
-        pass
+        if row["n_amplification_cycles"] is None:
+            data["n_amplification_cycles"] = 0
 
     try:
         data["volume_µl"] = int(str_to_float(row["volume_(µl)"]))

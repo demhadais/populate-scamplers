@@ -15,6 +15,12 @@ from utils import (
     to_snake_case,
 )
 
+SUSPENSION_FIXATIVES = {
+    "Formaldehyde-derivative fixed": "formaldehyde_derivative",
+    "DSP-fixed": "dithiobis_succinimidylpropionate",
+    "Scale DSP-Fixed": "dithiobis_succinimidylpropionate",
+}
+
 
 def _parse_row(
     row: dict[str, Any],
@@ -89,6 +95,10 @@ def _parse_row(
             data["embedded_in"] = to_snake_case(preliminary_em)
 
     match (row["type"], row["preservation_method"]):
+        # TODO: remove this
+        # case ("Nucleus Suspension", "Flash-frozen"):
+        #     data["type"] = "tissue"
+        #     data["preservation_state"] = "fresh"
         case ("Block" | "Curl", preservation) if preservation != "Fresh":
             preservation_to_fixative = {
                 "Formaldehyde-derivative fixed": "formaldehyde_derivative",
@@ -124,20 +134,20 @@ def _parse_row(
         case ("Cell Suspension" | "Nucleus Suspension", "Fresh" | None):
             data["type"] = "suspension"
             data["preservation_state"] = "fresh"
+        case ("Cell Pellet", "Flash-frozen"):
+            data["type"] = "cell_pellet"
+            data["preservation_state"] = "thermally_preserved"
+            data["thermal_preservation_method"] = "flash_freezing"
         case (
-            "Cell Suspension" | "Nucleus Suspension" | "Cell Pellet" | "Nucleus Pellet",
+            "Cell Suspension" | "Nucleus Suspension",
             preservation,
-        ):
+        ) if preservation in SUSPENSION_FIXATIVES:
             data["type"] = "suspension"
             data["preservation_state"] = "fixed"
-            fixatives = {
-                "Formaldehyde-derivative fixed": "formaldehyde_derivative",
-                "DSP-fixed": "dithiobis_succinimidylpropionate",
-                "Scale DSP-Fixed": "dithiobis_succinimidylpropionate",
-            }
-            data["fixative"] = fixatives.get(preservation)
+            data["fixative"] = SUSPENSION_FIXATIVES.get(preservation)
         case (ty, preservation_method):
-            data["type"] = f"{ty} {preservation_method}"
+            data["type"] = ty
+            data["preservation_state"] = preservation_method
 
     return data
 

@@ -69,7 +69,7 @@ def _parse_suspension_row(
     try:
         data["content"] = to_snake_case(row["biological_material"])
     except AttributeError:
-        raise ValueError(f"no biological material supplied for {data['readable_id']}")
+        pass
 
     data["preparer_ids"] = [
         people[row[key]]
