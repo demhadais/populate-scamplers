@@ -136,7 +136,7 @@ def _copy_dataset_directory(source_dataset_directory: Path, destination: Path):
 
 
 def main():
-    top_level_source_directories = Path("/sc/service/delivery").glob("*/*/25E*")
+    top_level_source_directories = Path("/sc/service/delivery").glob("*/*/2*")
 
     destination = Path(sys.argv[1])
 
