@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 from collections.abc import Generator
 from typing import Any
 
@@ -50,10 +51,7 @@ def _parse_row(
         if row[key] is not None
     ]
 
-    gems_id = gem_pools.get(row["gems_readable_id"])
-    if gems_id is None:
-        return None
-    data["gem_pool_id"] = gems_id
+    data["gem_pool_id"] = gem_pools.get(row["gems_readable_id"], uuid.uuid7())
 
     try:
         data["n_amplification_cycles"] = int(
@@ -73,6 +71,8 @@ def _parse_row(
             row["date_prepared"]
         ).isoformat()
     except ValueError:
+        pass
+    except TypeError:
         pass
 
     additional_data = {}

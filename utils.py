@@ -1,10 +1,12 @@
 import csv
 import datetime
 import json
+import uuid
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from types import NoneType
 from typing import Any
+from uuid import UUID
 
 import httpx
 from pydantic.dataclasses import dataclass
@@ -148,10 +150,12 @@ def _strip(value: Any) -> Any:
         return {_strip(key): _strip(val) for key, val in value.items()}
     elif isinstance(value, datetime.datetime):
         return value.isoformat()
+    elif isinstance(value, UUID):
+        return str(value)
     elif isinstance(value, (int, float, bool, NoneType)):
         return value
     else:
-        raise TypeError(f"{type(value)}")
+        raise TypeError(f"cannot strip {type(value)}")
 
 
 def strip_str_values(data: dict[str, Any]) -> dict[str, Any]:
@@ -161,6 +165,9 @@ def strip_str_values(data: dict[str, Any]) -> dict[str, Any]:
             new_dict[key] = strip_str_values(val)
         else:
             new_dict[key] = _strip(val)
+
+    if "preparer_ids" in new_dict and len(new_dict["preparer_ids"]) == 0:
+        new_dict["preparer_ids"] = [str(uuid.uuid7())]
 
     return new_dict
 

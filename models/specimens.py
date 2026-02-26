@@ -1,5 +1,6 @@
 # TODO: YOU ARE ALLOWED TO USE VARIABLES
 import asyncio
+import uuid
 from collections.abc import Generator
 from datetime import timedelta
 from typing import Any
@@ -45,7 +46,7 @@ def _parse_row(
         simple_key: row[simple_key] for simple_key in ["name", "readable_id", "tissue"]
     }
 
-    data["project_id"] = projects.get(row["lab_name"])
+    data["project_id"] = projects.get(row["lab_name"], str(uuid.uuid7()))
 
     if submitter_email := row["submitter_email"]:
         data["submitted_by"] = people[submitter_email.lower()]

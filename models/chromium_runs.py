@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import uuid
 from collections.abc import Generator
 from copy import deepcopy
 from typing import Any, Literal
@@ -118,7 +119,7 @@ def _parse_chromium_run(
     if run_at := run_at:
         data["run_at"] = date_str_to_eastcoast_9am(run_at)
 
-    data["run_by"] = people[chromium_run[0]["chip_run_by"]]
+    data["run_by"] = people.get(chromium_run[0]["chip_run_by"], str(uuid.uuid7()))
     data["assay_id"] = assays[chromium_run[0]["assay"]]
     data["succeeded"] = True
 

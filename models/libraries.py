@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 from collections.abc import Generator
 from typing import Any
 
@@ -36,16 +37,13 @@ def _parse_row(
 
     data = {"readable_id": row["readable_id"]}
 
-    cdna_id = cdna.get(row["cdna_readable_id"])
-    if cdna_id is None:
-        return None
-    data["cdna_id"] = cdna_id
+    data["cdna_id"] = cdna.get(row["cdna_readable_id"], uuid.uuid7())
 
-    preparer_ids = [
-        people.get(row[k]) for k in ["preparer_1_email", "preparer_2_email"]
+    data["preparer_ids"] = [
+        people[row[k]]
+        for k in ["preparer_1_email", "preparer_2_email"]
+        if row[k] is not None
     ]
-    preparer_ids = [id for id in preparer_ids if id is not None]
-    data["preparer_ids"] = preparer_ids
 
     # These spreadsheets are absolutely infernal
     try:

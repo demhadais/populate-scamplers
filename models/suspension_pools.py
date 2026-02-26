@@ -3,6 +3,7 @@ from collections.abc import Generator
 from typing import Any
 
 import httpx
+
 from utils import (
     NO_LIMIT_QUERY,
     date_str_to_eastcoast_9am,
@@ -32,7 +33,7 @@ def _parse_row(
     except TypeError:
         pass
 
-    data["suspensions"] = child_suspensions = [
+    data["suspensions"] = [
         {
             "suspension_id": susp["id"],
             "tag_id": multiplexing_tags.get(susp["multiplexing_tag_id"]),
@@ -42,7 +43,7 @@ def _parse_row(
         and "ob" not in susp["multiplexing_tag_id"].lower()
     ]
 
-    if not child_suspensions:
+    if not data["suspensions"]:
         return None
 
     data["preparer_ids"] = [

@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 from collections.abc import Generator
 from typing import Any
 from uuid import UUID
@@ -58,10 +59,10 @@ def _parse_suspension_row(
 
     data = {key: row[key] for key in ["readable_id"]}
 
-    parent_specimen = specimens.get(row["parent_specimen_readable_id"])
-
-    if parent_specimen is not None:
-        data["parent_specimen_id"] = parent_specimen["id"]
+    parent_specimen = specimens.get(
+        row["parent_specimen_readable_id"], {"id": uuid.uuid7()}
+    )
+    data["parent_specimen_id"] = parent_specimen["id"]
 
     if date_created := row["date_created"]:
         data["created_at"] = date_str_to_eastcoast_9am(date_created)
