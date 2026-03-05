@@ -10,4 +10,4 @@ wheels/
 .venv
 
 # Errors generated during testing
-.errors
+.errors*

@@ -265,9 +265,7 @@ async def _update_cellnoor_api(settings: "Settings"):
             gem_pools_data=gems,
             gem_pools_loading_data=gems_suspensions,
             id_key_for_gem_pools_data=settings.gems.id_key,
-            id_key_for_loading_data=settings.gems_suspensions.id_key,
             empty_fn_for_gem_pools_data=settings.gems.empty_fn,
-            empty_fn_for_loading_data=settings.gems_suspensions.empty_fn,
         )
 
         request_response_pairs = await _post_many(

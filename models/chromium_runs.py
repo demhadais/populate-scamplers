@@ -29,33 +29,30 @@ def _parse_gem_pools(
 
     for loading in loadings:
         parsed_loading = {}
+        if suspension_readable_id := loading.get("suspension_readable_id"):
+            parsed_loading["suspension_id"] = suspensions.get(
+                suspension_readable_id, uuid.uuid4()
+            )
+        elif suspension_pool_readable_id := loading.get("suspension_pool_readable_id"):
+            parsed_loading["suspension_pool_id"] = suspension_pools.get(
+                suspension_pool_readable_id, uuid.uuid4()
+            )
 
-        if (
-            loading["suspension_readable_id"] is not None
-            and loading["suspension_readable_id"] in suspensions
-        ):
-            parsed_loading["suspension_id"] = suspensions[
-                loading["suspension_readable_id"]
-            ]
-        elif (
-            loading["suspension_pool_readable_id"] is not None
-            and loading["suspension_readable_id"] in suspensions
-        ):
-            parsed_loading["suspension_pool_id"] = suspension_pools[
-                loading["suspension_pool_readable_id"]
-            ]
-        else:
-            return None
+        try:
+            parsed_loading["suspension_volume_loaded"] = {
+                "value": str_to_float(loading["suspension_volume_loaded_(µl)"]),
+                "unit": "microliter",
+            }
+        except AttributeError:
+            pass
 
-        parsed_loading["suspension_volume_loaded"] = {
-            "value": str_to_float(loading["suspension_volume_loaded_(µl)"]),
-            "unit": "microliter",
-        }
-
-        parsed_loading["buffer_volume_loaded"] = {
-            "value": str_to_float(loading["buffer_volume_loaded_(µl)"]),
-            "unit": "microliter",
-        }
+        try:
+            parsed_loading["buffer_volume_loaded"] = {
+                "value": str_to_float(loading["buffer_volume_loaded_(µl)"]),
+                "unit": "microliter",
+            }
+        except AttributeError:
+            pass
 
         if str(loading["tag_id"]).lower().startswith("ob"):
             for barcode in loading["tag_id"].split("+"):
@@ -88,13 +85,13 @@ def _gems_loading_succeeded(loadings: list[dict[str, Any]]):
 
 def _plexy(
     gem_pools: list[dict[str, Any]],
-) -> Literal["singleplex", "pool_multiplex", "on_chip_multiplexing"] | None:
+) -> Literal["standard", "on_chip_multiplexing"] | None:
     loading = gem_pools[0]["loading"]
-    if isinstance(loading, dict) and loading.get("suspension_pool_id"):
-        return "pool_multiplex"
 
-    if isinstance(loading, dict) and loading.get("suspension_id"):
-        return "singleplex"
+    if isinstance(loading, dict) and (
+        loading.get("suspension_pool_id") or loading.get("suspension_id")
+    ):
+        return "standard"
 
     if isinstance(loading, list) and loading[0].get("suspension_id"):
         return "on_chip_multiplexing"
@@ -125,9 +122,8 @@ def _parse_chromium_run(
 
     gem_pools = []
     for gems_row in chromium_run:
-        try:
-            loadings = gems_loading[gems_row["readable_id"]]
-        except KeyError:
+        loadings = gems_loading.get(gems_row["readable_id"])
+        if loadings is None:
             logging.warning(
                 f"GEMs {gems_row['readable_id']} does not have a complete loading specified"
             )
@@ -164,8 +160,6 @@ async def csv_to_chromium_runs(
     gem_pools_loading_data: list[dict[str, Any]],
     id_key_for_gem_pools_data: str,
     empty_fn_for_gem_pools_data: str,
-    id_key_for_loading_data: str,
-    empty_fn_for_loading_data: str,
     assay_name_to_spec: dict[str, TenxAssaySpec],
 ) -> Generator[dict[str, Any]]:
     async with asyncio.TaskGroup() as tg:
@@ -228,18 +222,7 @@ async def csv_to_chromium_runs(
         for gems_loading_row in gem_pools_loading_data
     }
     for gems_loading_row in gem_pools_loading_data:
-        required_keys = {"suspension_volume_loaded_(µl)", "buffer_volume_loaded_(µl)"}
-        if row_is_empty(
-            gems_loading_row,
-            required_keys,
-            id_key=id_key_for_loading_data,
-            empty_fn=empty_fn_for_loading_data,
-        ):
-            continue
-
         gems_loading[gems_loading_row["gems_readable_id"]].append(gems_loading_row)
-
-    gems_loading = {key: lst for key, lst in gems_loading.items() if len(lst) > 0}
 
     chromium_runs = (
         _parse_chromium_run(

@@ -33,18 +33,28 @@ def _parse_row(
     except TypeError:
         pass
 
-    data["suspensions"] = [
-        {
-            "suspension_id": susp["id"],
-            "tag_id": multiplexing_tags.get(susp["multiplexing_tag_id"]),
-        }
-        for susp in suspensions[data["readable_id"]]
-        if susp["multiplexing_tag_id"] is not None
-        and "ob" not in susp["multiplexing_tag_id"].lower()
-    ]
+    data["suspensions"] = []
+    for susp in suspensions[data["readable_id"]]:
+        if multiplexing_tag_id := susp["multiplexing_tag_id"]:
+            if "ob" in str(multiplexing_tag_id).lower():
+                continue
+
+            data["suspensions"].append(
+                {
+                    "suspension_id": susp["id"],
+                    "tag_id": multiplexing_tags.get(multiplexing_tag_id),
+                }
+            )
+        else:
+            data["suspensions"].append(susp["id"])
 
     if not data["suspensions"]:
         return None
+
+    if isinstance(data["suspensions"][0], dict):
+        data["multiplexing_type"] = "exogenous_tag"
+    else:
+        data["multiplexing_type"] = "genetic"
 
     data["preparer_ids"] = [
         people[row[email_key]]
