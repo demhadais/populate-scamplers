@@ -115,8 +115,8 @@ path = ""
 [specimens]
 path = ""
 field_renaming = { "Specimen Name" = "name", "ID" = "readable_id", "Experimental Condition (user-defined)" = "condition", "Sample Submitting Lab" = "lab_name", "Returned By" = "returner_email" }
-# We exclude the following rows because they're just RNA straight RNA, so we don't really care about them
-empty_fn = "lambda row: row['readable_id'] in ['25SP1663', '25SP1664', '25SP1665', '25SP1666', '25SP1667', '25SP1668', '25SP1669', '25SP1670', '25SP1671', '25SP1672', '25SP1673', '25SP1674', '25SP1675', '25SP1676', '25SP1677', '25SP1678', '25SP1679', '25SP1680', '25SP1681', '25SP1682', '25SP1683', '25SP1684', '25SP1782', '25SP1783', '25SP1784', '25SP1785', '25SP1786', '25SP1787', '25SP1788', '25SP1789', '25SP1790', '25SP1791', '25SP1792', '25SP1793']"
+# We exclude the following rows because they are unknown sample types and don't make it through to being assayed
+empty_fn = "lambda row: row['readable_id'] in ['25SP1149', '25SP1663', '25SP1664', '25SP1665', '25SP1666', '25SP1667', '25SP1668', '25SP1669', '25SP1670', '25SP1671', '25SP1672', '25SP1673', '25SP1674', '25SP1675', '25SP1676', '25SP1677', '25SP1678', '25SP1679', '25SP1680', '25SP1681', '25SP1682', '25SP1683', '25SP1684', '25SP1782', '25SP1783', '25SP1784', '25SP1785', '25SP1786', '25SP1787', '25SP1788', '25SP1789', '25SP1790', '25SP1791', '25SP1792', '25SP1793']"
 
 [specimen_measurements]
 path = ""

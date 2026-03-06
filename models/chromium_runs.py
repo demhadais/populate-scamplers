@@ -44,7 +44,10 @@ def _parse_gem_pools(
                 "unit": "microliter",
             }
         except AttributeError:
-            pass
+            parsed_loading["suspension_volume_loaded"] = {
+                "value": 0,
+                "unit": "microliter",
+            }
 
         try:
             parsed_loading["buffer_volume_loaded"] = {
@@ -52,10 +55,17 @@ def _parse_gem_pools(
                 "unit": "microliter",
             }
         except AttributeError:
-            pass
+            parsed_loading["buffer_volume_loaded"] = {"value": 0, "unit": "microliter"}
 
+        # This is thoroughly shit
         if str(loading["tag_id"]).lower().startswith("ob"):
             for barcode in loading["tag_id"].split("+"):
+                this = deepcopy(parsed_loading)
+                this["ocm_barcode_id"] = barcode.lower()
+                if this not in parsed_loadings:
+                    parsed_loadings.append(this)
+        elif loading["ocm_barcode_id_(if_suspension_pool)"]:
+            for barcode in loading["ocm_barcode_id_(if_suspension_pool)"].split("+"):
                 this = deepcopy(parsed_loading)
                 this["ocm_barcode_id"] = barcode.lower()
                 if this not in parsed_loadings:
@@ -93,7 +103,9 @@ def _plexy(
     ):
         return "standard"
 
-    if isinstance(loading, list) and loading[0].get("suspension_id"):
+    if isinstance(loading, list) and loading[0].get(
+        "suspension_id", loading[0].get("suspension_pool_id")
+    ):
         return "on_chip_multiplexing"
 
     else:

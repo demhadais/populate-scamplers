@@ -167,7 +167,7 @@ def strip_str_values(data: dict[str, Any]) -> dict[str, Any]:
             new_dict[key] = _strip(val)
 
     if "preparer_ids" in new_dict and len(new_dict["preparer_ids"]) == 0:
-        new_dict["preparer_ids"] = [str(uuid.uuid7())]
+        new_dict["preparer_ids"] = [str(uuid.uuid4())]
 
     return new_dict
 

@@ -37,13 +37,16 @@ def _parse_row(
 
     data = {"readable_id": row["readable_id"]}
 
-    data["cdna_id"] = cdna.get(row["cdna_readable_id"], uuid.uuid7())
+    data["cdna_id"] = cdna.get(row["cdna_readable_id"], uuid.uuid4())
 
     data["preparer_ids"] = [
         people[row[k]]
         for k in ["preparer_1_email", "preparer_2_email"]
         if row[k] is not None
     ]
+
+    if not data["preparer_ids"]:
+        data["preparer_ids"] = [people["ahmed.said@jax.org"]]
 
     # These spreadsheets are absolutely infernal
     try:

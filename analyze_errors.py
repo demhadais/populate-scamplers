@@ -15,15 +15,17 @@ def find_errors(
         (
             (
                 path.name,
-                json.loads((path / "0.json").read_bytes())["request"],
-                json.loads((path / "0.json").read_bytes())["response"][
-                    "extracted_body"
-                ],
+                read_most_recent_error(path)["request"],
+                read_most_recent_error(path)["response"]["extracted_body"],
             )
             for path in Path(".errors").glob(pattern)
         ),
         key=lambda e: sort_key(e[0], numerical_part_starts),
     )
+
+
+def read_most_recent_error(path: Path):
+    return json.loads(sorted(path.iterdir())[0].read_bytes())
 
 
 def sort_thing_with_experiment_id(readable_id: str, _):
