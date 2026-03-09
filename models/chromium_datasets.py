@@ -46,6 +46,10 @@ async def _post_dataset(
     data["library_ids"] = library_ids
     data["cmdline"] = " ".join(get_cmdline_file(path).read_text().split()[0:2])
 
+    # This specific dataset was slightly weird
+    if data["name"] == "25E50-L4_WIBJ2" or data["name"] == "25E50-L3_WIBJ2":
+        data["cmdline"] = "cellranger multi"
+
     response = await client.post(chromium_datasets_url, json=data)
     if response.is_error:
         write_error(request=data, response=response, error_dir=error_dir)
