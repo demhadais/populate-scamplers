@@ -24,11 +24,13 @@ def _get_cellranger_directory(dataset_directory: Path) -> Path:
 
 def get_cmdline_file(dataset_directory: Path) -> Path:
     cellranger_directory = _get_cellranger_directory(dataset_directory)
-    return cellranger_directory / "_files" / "_cmdline"
+    return cellranger_directory.parent / "_files" / "_cmdline"
 
 
 def get_pipeline_metadata_file(dataset_directory: Path) -> Path:
-    return dataset_directory / "pipeline-metadata.json"
+    path = dataset_directory / "pipeline-metadata.json"
+
+    return path
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -104,11 +106,8 @@ def _copy_dataset_directory(source_dataset_directory: Path, destination: Path):
     except NotADirectoryError:
         return
 
-    destination_directory = (
-        destination
-        / source_cellranger_directory.parent.name
-        / source_cellranger_directory.name
-    )
+    destination_directory = destination / source_cellranger_directory.parent.name
+    print(destination_directory)
     if destination_directory.exists():
         return
 
@@ -143,20 +142,7 @@ def _copy_dataset_directory(source_dataset_directory: Path, destination: Path):
 
 
 def main():
-    args = sys.argv
-    if len(args) == 1:
-        raise ValueError(
-            "at least one command-line argument (the destination directory) is required"
-        )
-
-    if len(args) == 2:
-        glob_pattern = "*/*/2*"
-    elif len(args) == 3:
-        glob_pattern = sys.argv[2]
-    else:
-        raise ValueError("too many command-line arguments supplied")
-
-    top_level_source_directories = Path("/sc/service/delivery").glob(glob_pattern)
+    top_level_source_directories = Path("/sc/service/delivery").glob("*/*/2*")
 
     destination = Path(sys.argv[1])
 

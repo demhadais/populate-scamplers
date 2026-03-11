@@ -34,10 +34,13 @@ async def _post_dataset(
     libraries: dict[str, str],
     error_dir: Path,
 ):
-    library_readable_ids = re.findall(r"25E\d+-L\d+", path.name)
+    library_readable_ids1 = re.findall(r"25E\d+-L\d+", path.name)
+    library_readable_ids2 = re.findall(r"26CH\d+-L\d+", path.name)
 
     try:
-        library_ids = [libraries[id] for id in library_readable_ids]
+        library_ids = [
+            libraries[id] for id in library_readable_ids1 + library_readable_ids2
+        ]
     except KeyError:
         return None
 
