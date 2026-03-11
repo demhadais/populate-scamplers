@@ -95,7 +95,14 @@ def _destination_file_path(
 
 
 def _copy_dataset_directory(source_dataset_directory: Path, destination: Path):
-    source_cellranger_directory = _get_cellranger_directory(source_dataset_directory)
+    try:
+        source_cellranger_directory = _get_cellranger_directory(
+            source_dataset_directory
+        )
+    except StopIteration:
+        return
+    except NotADirectoryError:
+        return
 
     destination_directory = (
         destination
@@ -136,7 +143,20 @@ def _copy_dataset_directory(source_dataset_directory: Path, destination: Path):
 
 
 def main():
-    top_level_source_directories = Path("/sc/service/delivery").glob("*/*/2*")
+    args = sys.argv
+    if len(args) == 1:
+        raise ValueError(
+            "at least one command-line argument (the destination directory) is required"
+        )
+
+    if len(args) == 2:
+        glob_pattern = "*/*/2*"
+    elif len(args) == 3:
+        glob_pattern = sys.argv[2]
+    else:
+        raise ValueError("too many command-line arguments supplied")
+
+    top_level_source_directories = Path("/sc/service/delivery").glob(glob_pattern)
 
     destination = Path(sys.argv[1])
 
