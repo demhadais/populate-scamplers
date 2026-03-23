@@ -1,8 +1,6 @@
 import shutil
 import sys
-from collections.abc import Generator
 from dataclasses import dataclass
-from io import BufferedReader
 from pathlib import Path
 
 METRICS_SUMMARY_FILENAMES = {
@@ -36,20 +34,20 @@ def get_pipeline_metadata_file(dataset_directory: Path) -> Path:
 
 @dataclass(frozen=True, kw_only=True)
 class CellrangerOutputFiles:
-    _metrics: Path
+    _metrics: list[Path]
     _qc_library_metrics: Path
     _qc_report: Path
     _qc_sample_metrics: Path
-    _web_summary: Path
+    _web_summaries: list[Path]
 
     @property
-    def files(self) -> list[tuple[str, BufferedReader]]:
+    def files(self) -> list[tuple[str, Path]]:
         files = [
-            self._metrics,
+            *self._metrics,
             self._qc_library_metrics,
             self._qc_report,
             self._qc_sample_metrics,
-            self._web_summary,
+            *self._web_summaries,
         ]
 
         ret = []
@@ -65,14 +63,14 @@ class CellrangerOutputFiles:
                 per_sample_outs_dir = sample_dir.parent
                 filename = f"{per_sample_outs_dir.name}/{sample_dir.name}/{f.name}"
 
-            ret.append((filename, f.open(mode="rb")))
+            ret.append((filename, f))
 
         return ret
 
 
 def _get_files_from_per_sample_outs(
     dataset_directory: Path,
-) -> Generator[CellrangerOutputFiles] | None:
+) -> CellrangerOutputFiles | None:
     cellranger_directory = _get_cellranger_directory(dataset_directory)
     per_sample_outs = cellranger_directory / "per_sample_outs"
 
@@ -88,16 +86,17 @@ def _get_files_from_per_sample_outs(
         cellranger_directory / p for p in cellranger10_filenames
     ]
 
-    return (
-        CellrangerOutputFiles(
-            _qc_library_metrics=_qc_library_metrics,
-            _qc_report=_qc_report,
-            _qc_sample_metrics=_qc_sample_metrics,
-            _metrics=sample_dir / METRICS_SUMMARY_FILENAMES[cellranger_directory.name],
-            _web_summary=sample_dir / "web_summary.html",
-        )
-        for sample_dir in per_sample_outs.iterdir()
-        if sample_dir.is_dir()
+    return CellrangerOutputFiles(
+        _qc_library_metrics=_qc_library_metrics,
+        _qc_report=_qc_report,
+        _qc_sample_metrics=_qc_sample_metrics,
+        _metrics=[
+            sample_dir / METRICS_SUMMARY_FILENAMES[cellranger_directory.name]
+            for sample_dir in per_sample_outs.iterdir()
+        ],
+        _web_summaries=[
+            sample_dir / "web_summary.html" for sample_dir in per_sample_outs.iterdir()
+        ],
     )
 
 
@@ -110,19 +109,20 @@ def _get_files_from_cellranger_directory(
         _qc_library_metrics=cellranger_directory / "qc_library_metrics.csv",
         _qc_report=cellranger_directory / "qc_report.csv",
         _qc_sample_metrics=cellranger_directory / "qc_sample_metrics.csv",
-        _metrics=cellranger_directory
-        / METRICS_SUMMARY_FILENAMES[cellranger_directory.name],
-        _web_summary=cellranger_directory / "web_summary.html",
+        _metrics=[
+            cellranger_directory / METRICS_SUMMARY_FILENAMES[cellranger_directory.name]
+        ],
+        _web_summaries=[cellranger_directory / "web_summary.html"],
     )
 
 
 def get_cellranger_output_files(
     dataset_directory: Path,
-) -> Generator[CellrangerOutputFiles]:
+) -> CellrangerOutputFiles:
     if files := _get_files_from_per_sample_outs(dataset_directory):
         return files
 
-    return (p for p in [_get_files_from_cellranger_directory(dataset_directory)])
+    return _get_files_from_cellranger_directory(dataset_directory)
 
 
 def _destination_file_path(
@@ -171,26 +171,25 @@ def _copy_dataset_directory(source_dataset_directory: Path, destination: Path):
         source_pipeline_metadata, destination_directory / source_pipeline_metadata.name
     )
 
-    for output_file_set in get_cellranger_output_files(source_dataset_directory):
-        for source_file in [
-            output_file_set._metrics,
-            output_file_set._qc_library_metrics,
-            output_file_set._qc_report,
-            output_file_set._qc_sample_metrics,
-            output_file_set._web_summary,
-        ]:
-            print(source_file.absolute())
-            if not source_file.exists():
-                continue
+    fileset = get_cellranger_output_files(source_dataset_directory)
+    for source_file in [
+        *fileset._metrics,
+        fileset._qc_library_metrics,
+        fileset._qc_report,
+        fileset._qc_sample_metrics,
+        *fileset._web_summaries,
+    ]:
+        if not source_file.exists():
+            continue
 
-            destination_file = _destination_file_path(
-                source_dataset_directory=source_dataset_directory,
-                source_file=source_file,
-                destination_directory=destination_directory,
-            )
+        destination_file = _destination_file_path(
+            source_dataset_directory=source_dataset_directory,
+            source_file=source_file,
+            destination_directory=destination_directory,
+        )
 
-            destination_file.parent.mkdir(exist_ok=True, parents=True)
-            shutil.copyfile(source_file, destination_file)
+        destination_file.parent.mkdir(exist_ok=True, parents=True)
+        shutil.copyfile(source_file, destination_file)
 
 
 def main():

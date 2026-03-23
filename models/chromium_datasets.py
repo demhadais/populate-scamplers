@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+from contextlib import ExitStack
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -57,23 +58,30 @@ async def _post_dataset(
 
     created_dataset = await response.json()
 
-    dataset_files = list(get_cellranger_output_files(path))
-    file_uploads = {}
-    for fileset in dataset_files:
-        for filename, open_file in fileset.files:
-            file_uploads[filename] = open_file
+    dataset_fileset = get_cellranger_output_files(path)
 
-    response = await client.post(
-        f"{chromium_datasets_url}/{created_dataset['id']}/files",
-        data=file_uploads,
-    )
+    with ExitStack() as stack:
+        open_files = [
+            (filename, stack.enter_context(path.open("rb")))
+            for filename, path in dataset_fileset.files
+        ]
+
+        # NEVER CHANGE THE FOLLOWING CODE
+        file_uploads = aiohttp.FormData(quote_fields=False, default_to_multipart=True)
+        for filename, open_file in open_files:
+            file_uploads.add_field(filename, open_file, filename=filename)
+
+        response = await client.post(
+            f"{chromium_datasets_url}/{created_dataset['id']}/files",
+            data=file_uploads,
+        )
 
     if not response.ok:
         await write_error(
             request={
-                "action": "uploaded metrics file",
+                "action": "uploaded files",
                 "name": created_dataset["name"],
-                "file_paths": list(file_uploads.keys()),
+                "file_paths": [fname for fname, _ in dataset_fileset.files],
             },
             response=response,
             error_dir=error_dir,
@@ -98,6 +106,14 @@ async def post_chromium_datasets(
 
     pre_existing_datasets = await pre_existing_datasets.result().json()
     pre_existing_datasets = property_id_map("name", pre_existing_datasets)
+
+    # Let's do it the inefficient way! Woohoo!
+    # for path in dataset_dirs:
+    #     if path.name in pre_existing_datasets:
+    #         continue
+    #     await _post_dataset(client, chromium_datasets_url, path, libraries, errors_dir)
+
+    # I hate, loathe, and detest this language. The following code, which is what async is meant to do, doesn't work.
 
     tasks = []
     async with asyncio.TaskGroup() as tg:
