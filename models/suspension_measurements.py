@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from typing import Any, Literal
 
-import httpx
+import aiohttp
 
 from utils import (
     NO_LIMIT_QUERY,
@@ -283,12 +283,12 @@ async def csv_to_suspension_measurements(
     people_url: str,
     suspensions_url: str,
     data: list[dict[str, Any]],
-    client: httpx.AsyncClient,
+    client: aiohttp.ClientSession,
 ) -> list[tuple[str, list[dict[str, Any]]]]:
     # I could not care less about making this faster using actual async features. I hate this language and this project
     people = await get_person_email_id_map(client, people_url)
-    suspensions = await client.get(suspensions_url, params=NO_LIMIT_QUERY)
-    suspensions = suspensions.json()
+    suspensions_resp = await client.get(suspensions_url, params=NO_LIMIT_QUERY)
+    suspensions = await suspensions_resp.json()
     suspensions = {suspension["readable_id"]: suspension for suspension in suspensions}
     rows_by_readable_id = {row["readable_id"]: row for row in data}
 
@@ -300,7 +300,8 @@ async def csv_to_suspension_measurements(
     measurements = []
 
     for row, suspension in relevant_rows_i_hate_python_and_spreadsheets:
-        suspension = (await client.get(f"{suspensions_url}/{suspension['id']}")).json()
+        resp = await client.get(f"{suspensions_url}/{suspension['id']}")
+        suspension = await resp.json()
 
         measurement_set = _extract_measurements_from_row(
             row, people=people, suspension=suspension

@@ -12,7 +12,7 @@ from copy_chromium_datasets import (
     get_cmdline_file,
     get_pipeline_metadata_file,
 )
-from utils import NO_LIMIT_QUERY, property_id_map
+from utils import NO_LIMIT_QUERY, property_id_map, write_error
 
 
 def _get_delivered_at(dataset_directory: Path) -> str:
@@ -51,8 +51,8 @@ async def _post_dataset(
         data["cmdline"] = "cellranger multi"
 
     response = await client.post(chromium_datasets_url, json=data)
-    if response.status != 200:
-        # write_error(request=data, response=response, error_dir=error_dir)
+    if not response.ok:
+        await write_error(request=data, response=response, error_dir=error_dir)
         return
 
     created_dataset = await response.json()
@@ -67,13 +67,17 @@ async def _post_dataset(
         f"{chromium_datasets_url}/{created_dataset['id']}/files",
         data=file_uploads,
     )
-    if response.status != 200:
-        pass
-        # write_error(
-        #     request={"action": "uploaded metrics file"},
-        #     response=response,
-        #     error_dir=error_dir,
-        # )
+
+    if not response.ok:
+        await write_error(
+            request={
+                "action": "uploaded metrics file",
+                "name": created_dataset["name"],
+                "file_paths": list(file_uploads.keys()),
+            },
+            response=response,
+            error_dir=error_dir,
+        )
 
 
 async def post_chromium_datasets(
@@ -94,14 +98,6 @@ async def post_chromium_datasets(
 
     pre_existing_datasets = await pre_existing_datasets.result().json()
     pre_existing_datasets = property_id_map("name", pre_existing_datasets)
-
-    # Let's do it the inefficient way! Woohoo!
-    for path in dataset_dirs:
-        if path.name in pre_existing_datasets:
-            continue
-        await _post_dataset(client, chromium_datasets_url, path, libraries, errors_dir)
-
-    # I loathe, detest, and despise this language. What the hell about this causes a bug?
 
     tasks = []
     async with asyncio.TaskGroup() as tg:

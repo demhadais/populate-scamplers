@@ -3,7 +3,7 @@ import uuid
 from collections.abc import Generator
 from typing import Any
 
-import httpx
+import aiohttp
 
 from utils import (
     NO_LIMIT_QUERY,
@@ -82,7 +82,7 @@ def _parse_row(
 
 
 async def csv_to_new_libraries(
-    client: httpx.AsyncClient,
+    client: aiohttp.ClientSession,
     data: list[dict[str, Any]],
     people_url: str,
     cdna_url: str,
@@ -99,8 +99,8 @@ async def csv_to_new_libraries(
 
     people, cdna, pre_existing_libraries = (
         people.result(),
-        cdna.result().json(),
-        pre_existing_libraries.result().json(),
+        await cdna.result().json(),
+        await pre_existing_libraries.result().json(),
     )
     cdna = property_id_map("readable_id", cdna)
 

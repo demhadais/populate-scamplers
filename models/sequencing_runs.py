@@ -2,7 +2,7 @@
 # from collections.abc import Generator, Iterator
 # from typing import Any
 
-# import httpx
+# import aiohttp
 
 # from utils import (
 #     NO_LIMIT_QUERY,

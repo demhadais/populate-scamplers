@@ -8,7 +8,7 @@ from types import NoneType
 from typing import Any
 from uuid import UUID
 
-import httpx
+import aiohttp
 from pydantic.dataclasses import dataclass
 from pydantic.main import BaseModel
 
@@ -122,9 +122,10 @@ def row_is_empty(
 
 
 async def get_project_name_id_map(
-    client: httpx.AsyncClient, labs_url: str
+    client: aiohttp.ClientSession, labs_url: str
 ) -> dict[str, str]:
-    labs = (await client.get(labs_url, params=NO_LIMIT_QUERY)).json()
+    async with client.get(labs_url, params=NO_LIMIT_QUERY) as resp:
+        labs = await resp.json()
     labs = property_id_map("name", labs)
     labs = labs | {name.lower(): id for name, id in labs.items()}
 
@@ -132,9 +133,10 @@ async def get_project_name_id_map(
 
 
 async def get_person_email_id_map(
-    client: httpx.AsyncClient, people_url: str
+    client: aiohttp.ClientSession, people_url: str
 ) -> dict[str, str]:
-    people = (await client.get(people_url, params=NO_LIMIT_QUERY)).json()
+    async with client.get(people_url, params=NO_LIMIT_QUERY) as resp:
+        people = await resp.json()
     people = property_id_map("email", people)
     people = people | {email.lower(): id for email, id in people.items()}
 
@@ -172,9 +174,9 @@ def strip_str_values(data: dict[str, Any]) -> dict[str, Any]:
     return new_dict
 
 
-def write_error(
+async def write_error(
     request: dict[str, Any],
-    response: httpx.Response,
+    response: aiohttp.ClientResponse,
     error_dir: Path,
     filename_generator: Callable[[dict[str, Any]], str] = lambda d: d.get(
         "readable_id", d.get("name", "ERROR")
@@ -187,14 +189,14 @@ def write_error(
     error_path = error_subdir / Path(f"{filename}.json")
 
     try:
-        response_body = response.json()
+        response_body = await response.json()
     except Exception:
-        response_body = response.text
+        response_body = await response.text()
 
     to_write = {
         "request": request,
         "response": {
-            "status": response.status_code,
+            "status": response.status,
             "extracted_body": response_body,
             "headers": {key: val for key, val in response.headers.items()},
         },

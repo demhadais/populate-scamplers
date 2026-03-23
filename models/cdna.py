@@ -3,7 +3,7 @@ import uuid
 from collections.abc import Generator
 from typing import Any
 
-import httpx
+import aiohttp
 
 from utils import (
     NO_LIMIT_QUERY,
@@ -89,7 +89,7 @@ def _parse_row(
 
 
 async def csv_to_new_cdna(
-    client: httpx.AsyncClient,
+    client: aiohttp.ClientSession,
     people_url: str,
     gem_pool_url: str,
     cdna_url: str,
@@ -104,8 +104,8 @@ async def csv_to_new_cdna(
 
     people, gem_pools, pre_existing_cdna = (
         people.result(),
-        gem_pools.result().json(),
-        pre_existing_cdna.result().json(),
+        await gem_pools.result().json(),
+        await pre_existing_cdna.result().json(),
     )
 
     pre_existing_cdna = {c["readable_id"]: c for c in pre_existing_cdna}

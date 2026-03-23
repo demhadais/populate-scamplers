@@ -5,7 +5,7 @@ from collections.abc import Generator
 from datetime import timedelta
 from typing import Any
 
-import httpx
+import aiohttp
 
 from utils import (
     NO_LIMIT_QUERY,
@@ -154,7 +154,7 @@ def _parse_row(
 
 
 async def csv_to_new_specimens(
-    client: httpx.AsyncClient,
+    client: aiohttp.ClientSession,
     people_url: str,
     project_url: str,
     specimen_url: str,
@@ -175,10 +175,9 @@ async def csv_to_new_specimens(
         )
         for row in data
     )
-    pre_existing_specimens = {
-        s["readable_id"]
-        for s in (await client.get(specimen_url, params=NO_LIMIT_QUERY)).json()
-    }
+
+    resp = await client.get(specimen_url, params=NO_LIMIT_QUERY)
+    pre_existing_specimens = {s["readable_id"] for s in await resp.json()}
 
     new_specimens = (
         spec

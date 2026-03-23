@@ -3,7 +3,7 @@ from collections.abc import Generator
 from datetime import UTC, datetime
 from typing import Any
 
-import httpx
+import aiohttp
 
 from utils import (
     get_project_name_id_map,
@@ -27,7 +27,7 @@ def _parse_row(row: dict[str, Any], id_key: str, empty_fn: str):
 
 
 async def csv_to_new_projects(
-    client: httpx.AsyncClient,
+    client: aiohttp.ClientSession,
     project_url: str,
     data: list[dict[str, Any]],
     id_key: str,

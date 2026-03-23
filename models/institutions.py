@@ -1,7 +1,7 @@
 from collections.abc import Generator
 from typing import Any
 
-import httpx
+import aiohttp
 
 from utils import row_is_empty
 
@@ -29,15 +29,14 @@ def _parse_row(
 
 
 async def csv_to_new_institutions(
-    client: httpx.AsyncClient,
+    client: aiohttp.ClientSession,
     institutions_url: str,
     data: list[dict[str, Any]],
     id_key: str,
     empty_fn: str,
 ) -> Generator[dict[str, Any]]:
-    pre_existing_institutions = {
-        inst["id"] for inst in (await client.get(institutions_url)).json()
-    }
+    response = await client.get(institutions_url)
+    pre_existing_institutions = {inst["id"] for inst in (await response.json())}
     new_institutions = (
         _parse_row(row, id_key=id_key, empty_fn=empty_fn) for row in data
     )

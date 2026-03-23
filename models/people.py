@@ -1,7 +1,7 @@
 from collections.abc import Generator
 from typing import Any
 
-import httpx
+import aiohttp
 
 from utils import NO_LIMIT_QUERY, property_id_map, row_is_empty
 
@@ -28,10 +28,10 @@ def _parse_row(
 
 
 async def _email_domain_institution_map(
-    client: httpx.AsyncClient, institution_url: str
+    client: aiohttp.ClientSession, institution_url: str
 ) -> dict[str, str]:
-    institutions = await client.get(institution_url)
-    institutions = institutions.json()
+    async with client.get(institution_url) as resp:
+        institutions = await resp.json()
     institution_names = property_id_map("name", institutions)
 
     institution_domains = {
@@ -57,7 +57,7 @@ async def _email_domain_institution_map(
 
 
 async def csv_to_new_people(
-    client: httpx.AsyncClient,
+    client: aiohttp.ClientSession,
     institution_url: str,
     people_url: str,
     data: list[dict[str, Any]],
@@ -69,9 +69,9 @@ async def csv_to_new_people(
         _parse_row(row, institution_domains, id_key=id_key, empty_fn=empty_fn)
         for row in data
     )
-    pre_existing_people = {
-        p["email"] for p in (await client.get(people_url, params=NO_LIMIT_QUERY)).json()
-    }
+    async with client.get(people_url, params=NO_LIMIT_QUERY) as resp:
+        people_json = await resp.json()
+    pre_existing_people = {p["email"] for p in people_json}
     pre_existing_people = pre_existing_people | {
         email.lower() for email in pre_existing_people if email is not None
     }

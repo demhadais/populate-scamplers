@@ -4,7 +4,7 @@ from collections.abc import Generator
 from typing import Any
 from uuid import UUID
 
-import httpx
+import aiohttp
 
 from utils import (
     NO_LIMIT_QUERY,
@@ -92,7 +92,7 @@ def _parse_suspension_row(
 
 
 async def csv_to_new_suspensions(
-    client: httpx.AsyncClient,
+    client: aiohttp.ClientSession,
     people_url: str,
     specimens_url: str,
     suspensions_url: str,
@@ -102,23 +102,21 @@ async def csv_to_new_suspensions(
     empty_fn: str,
 ) -> Generator[dict[str, Any]]:
     async with asyncio.TaskGroup() as tg:
-        tasks = [
-            tg.create_task(task)
-            for task in (
-                get_person_email_id_map(client, people_url),
-                client.get(specimens_url, params=NO_LIMIT_QUERY),
-                client.get(suspensions_url, params=NO_LIMIT_QUERY),
-                client.get(multiplexing_tags_url, params=NO_LIMIT_QUERY),
-            )
-        ]
+        people_task = tg.create_task(get_person_email_id_map(client, people_url))
+        specimens_task = tg.create_task(
+            client.get(specimens_url, params=NO_LIMIT_QUERY)
+        )
+        pre_existing_suspensions_task = tg.create_task(
+            client.get(suspensions_url, params=NO_LIMIT_QUERY)
+        )
+        multiplexing_tags_task = tg.create_task(
+            client.get(multiplexing_tags_url, params=NO_LIMIT_QUERY)
+        )
 
-    people, specimens, pre_existing_suspensions, multiplexing_tags = [
-        task.result() for task in tasks
-    ]
-    specimens, pre_existing_suspensions, multiplexing_tags = [
-        response.json()  # pyright: ignore[reportAttributeAccessIssue]
-        for response in [specimens, pre_existing_suspensions, multiplexing_tags]
-    ]
+    people = people_task.result()
+    specimens = await specimens_task.result().json()
+    pre_existing_suspensions = await pre_existing_suspensions_task.result().json()
+    multiplexing_tags = await multiplexing_tags_task.result().json()
     specimens = {s["readable_id"]: s for s in specimens}
     pre_existing_suspensions = {s["readable_id"] for s in pre_existing_suspensions}
     multiplexing_tags = {tag["tag_id"]: tag["id"] for tag in multiplexing_tags}

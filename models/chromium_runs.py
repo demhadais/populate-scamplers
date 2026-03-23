@@ -5,7 +5,7 @@ from collections.abc import Generator
 from copy import deepcopy
 from typing import Any, Literal
 
-import httpx
+import aiohttp
 
 from utils import (
     NO_LIMIT_QUERY,
@@ -162,7 +162,7 @@ def _parse_chromium_run(
 
 
 async def csv_to_chromium_runs(
-    client: httpx.AsyncClient,
+    client: aiohttp.ClientSession,
     people_url: str,
     suspensions_url: str,
     suspension_pools_url: str,
@@ -175,27 +175,25 @@ async def csv_to_chromium_runs(
     assay_name_to_spec: dict[str, TenxAssaySpec],
 ) -> Generator[dict[str, Any]]:
     async with asyncio.TaskGroup() as tg:
-        tasks = (
-            get_person_email_id_map(client, people_url),
-            client.get(suspensions_url, params=NO_LIMIT_QUERY),
-            client.get(suspension_pools_url, params=NO_LIMIT_QUERY),
-            client.get(chromium_runs_url, params=NO_LIMIT_QUERY),
-            client.get(tenx_assays_url, params=NO_LIMIT_QUERY),
+        people_task = tg.create_task(get_person_email_id_map(client, people_url))
+        suspensions_task = tg.create_task(
+            client.get(suspensions_url, params=NO_LIMIT_QUERY)
         )
-        tasks = tuple(tg.create_task(task) for task in tasks)
+        suspension_pools_task = tg.create_task(
+            client.get(suspension_pools_url, params=NO_LIMIT_QUERY)
+        )
+        pre_existing_chromium_runs_task = tg.create_task(
+            client.get(chromium_runs_url, params=NO_LIMIT_QUERY)
+        )
+        tenx_assays_task = tg.create_task(
+            client.get(tenx_assays_url, params=NO_LIMIT_QUERY)
+        )
 
-    people, suspensions, suspension_pools, pre_existing_chromium_runs, tenx_assays = (
-        tuple(task.result() for task in tasks)
-    )
-    suspensions, suspension_pools, pre_existing_chromium_runs, tenx_assays = (
-        r.json()  # pyright: ignore[reportAttributeAccessIssue]
-        for r in (
-            suspensions,
-            suspension_pools,
-            pre_existing_chromium_runs,
-            tenx_assays,
-        )
-    )
+    people = people_task.result()
+    suspensions = await suspensions_task.result().json()
+    suspension_pools = await suspension_pools_task.result().json()
+    pre_existing_chromium_runs = await pre_existing_chromium_runs_task.result().json()
+    tenx_assays = await tenx_assays_task.result().json()
 
     tenx_assays = {TenxAssaySpec(**a): a["id"] for a in tenx_assays}
     tenx_assays = {
@@ -240,7 +238,7 @@ async def csv_to_chromium_runs(
         _parse_chromium_run(
             chromium_run,
             gems_loading,
-            people,  # pyright: ignore[reportArgumentType]
+            people,
             suspensions,
             suspension_pools,
             tenx_assays,

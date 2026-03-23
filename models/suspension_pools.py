@@ -2,7 +2,7 @@ import asyncio
 from collections.abc import Generator
 from typing import Any
 
-import httpx
+import aiohttp
 
 from utils import (
     NO_LIMIT_QUERY,
@@ -66,7 +66,7 @@ def _parse_row(
 
 
 async def csvs_to_new_suspension_pools(
-    client: httpx.AsyncClient,
+    client: aiohttp.ClientSession,
     people_url: str,
     suspension_pool_url: str,
     suspensions_url: str,
@@ -91,7 +91,7 @@ async def csvs_to_new_suspension_pools(
         tasks[3].result(),
     )
 
-    pre_existing_suspension_pools = pre_existing_suspension_pools.json()
+    pre_existing_suspension_pools = await pre_existing_suspension_pools.json()
     pre_existing_suspension_pools = {
         pool["readable_id"] for pool in pre_existing_suspension_pools
     }
@@ -105,7 +105,7 @@ async def csvs_to_new_suspension_pools(
         susp_row["readable_id"]: susp_row for susp_row in suspension_csv_data
     }  # pyright: ignore[reportAssignmentType]
 
-    suspensions_from_api = suspensions_from_api.json()
+    suspensions_from_api = await suspensions_from_api.json()
     for suspension in suspensions_from_api:
         readable_id = suspension["readable_id"]
         suspension_from_csv = suspension_csv_data[readable_id]
@@ -118,7 +118,7 @@ async def csvs_to_new_suspension_pools(
             pooled_suspension_list = grouped_suspensions[pooled_into]
             pooled_suspension_list.append(suspension)
 
-    multiplexing_tags = multiplexing_tags.json()
+    multiplexing_tags = await multiplexing_tags.json()
     multiplexing_tags = {tag["tag_id"]: tag["id"] for tag in multiplexing_tags}
     new_suspension_pools = (
         _parse_row(

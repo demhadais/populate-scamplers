@@ -2,7 +2,7 @@ import asyncio
 from collections.abc import Callable, Generator
 from typing import Any
 
-import httpx
+import aiohttp
 
 from utils import (
     NO_LIMIT_QUERY,
@@ -56,7 +56,7 @@ def _parse_specimen_measurement_row(
 
 
 async def _get_pre_existing_measurements(
-    client: httpx.AsyncClient,
+    client: aiohttp.ClientSession,
     specimen_ids: list[str],
     specimen_measurement_url_creator: Callable[[str], str],
 ) -> list[dict[str, Any]]:
@@ -67,11 +67,11 @@ async def _get_pre_existing_measurements(
             url = specimen_measurement_url_creator(specimen_id)
             tasks.append(tg.create_task(client.get(url)))
 
-    return [m for task in tasks for m in task.result().json()]
+    return [m for task in tasks for m in await task.result().json()]
 
 
 async def csv_to_new_specimen_measurements(
-    client: httpx.AsyncClient,
+    client: aiohttp.ClientSession,
     specimen_url: str,
     people_url: str,
     specimen_measurement_url_creator: Callable[[str], str],
@@ -79,13 +79,13 @@ async def csv_to_new_specimen_measurements(
     empty_fn: str,
     data: list[dict[str, Any]],
 ) -> Generator[tuple[str, dict[str, Any]]]:
-    specimens = (await client.get(specimen_url, params=NO_LIMIT_QUERY)).json()
+    specimens = await (await client.get(specimen_url, params=NO_LIMIT_QUERY)).json()
     specimen_id_map = {spec["readable_id"]: spec for spec in specimens}
 
     if len(specimen_id_map) != len(specimens):
         raise ValueError("specimen readable IDs are not unique")
 
-    people = (await client.get(people_url, params=NO_LIMIT_QUERY)).json()
+    people = await (await client.get(people_url, params=NO_LIMIT_QUERY)).json()
     people = property_id_map("email", people)
 
     pre_existing_measurements = await _get_pre_existing_measurements(
