@@ -3,6 +3,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
+import aiohttp
 import httpx
 from pydantic_settings import (
     BaseSettings,
@@ -327,13 +328,14 @@ async def _update_cellnoor_api(settings: "Settings"):
 
     chromium_datasets_url = f"{settings.api_base_url}/chromium-datasets"
     if dataset_dirs := settings.dataset_dirs:
-        await post_chromium_datasets(
-            client,
-            chromium_datasets_url,
-            libraries_url,
-            dataset_dirs,
-            settings.errors_dir,
-        )
+        async with aiohttp.ClientSession() as client:
+            await post_chromium_datasets(
+                client,
+                chromium_datasets_url,
+                libraries_url,
+                dataset_dirs,
+                settings.errors_dir,
+            )
 
 
 class Settings(BaseSettings):

@@ -2,6 +2,7 @@ import shutil
 import sys
 from collections.abc import Generator
 from dataclasses import dataclass
+from io import BufferedReader
 from pathlib import Path
 
 METRICS_SUMMARY_FILENAMES = {
@@ -24,7 +25,7 @@ def _get_cellranger_directory(dataset_directory: Path) -> Path:
 
 def get_cmdline_file(dataset_directory: Path) -> Path:
     cellranger_directory = _get_cellranger_directory(dataset_directory)
-    return cellranger_directory.parent / "_files" / "_cmdline"
+    return cellranger_directory / "_files" / "_cmdline"
 
 
 def get_pipeline_metadata_file(dataset_directory: Path) -> Path:
@@ -35,8 +36,38 @@ def get_pipeline_metadata_file(dataset_directory: Path) -> Path:
 
 @dataclass(frozen=True, kw_only=True)
 class CellrangerOutputFiles:
-    metrics_file: Path
-    web_summary_file: Path
+    _metrics: Path
+    _qc_library_metrics: Path
+    _qc_report: Path
+    _qc_sample_metrics: Path
+    _web_summary: Path
+
+    @property
+    def files(self) -> list[tuple[str, BufferedReader]]:
+        files = [
+            self._metrics,
+            self._qc_library_metrics,
+            self._qc_report,
+            self._qc_sample_metrics,
+            self._web_summary,
+        ]
+
+        ret = []
+
+        for f in files:
+            if not f.exists():
+                continue
+
+            if "cellranger" in f.parent.name:
+                filename = f.name
+            else:
+                sample_dir = f.parent
+                per_sample_outs_dir = sample_dir.parent
+                filename = f"{per_sample_outs_dir.name}/{sample_dir.name}/{f.name}"
+
+            ret.append((filename, f.open(mode="rb")))
+
+        return ret
 
 
 def _get_files_from_per_sample_outs(
@@ -48,11 +79,22 @@ def _get_files_from_per_sample_outs(
     if not per_sample_outs.exists():
         return
 
+    cellranger10_filenames = [
+        "qc_library_metrics.csv",
+        "qc_report.csv",
+        "qc_sample_metrics.csv",
+    ]
+    _qc_library_metrics, _qc_report, _qc_sample_metrics = [
+        cellranger_directory / p for p in cellranger10_filenames
+    ]
+
     return (
         CellrangerOutputFiles(
-            metrics_file=sample_dir
-            / METRICS_SUMMARY_FILENAMES[cellranger_directory.name],
-            web_summary_file=sample_dir / "web_summary.html",
+            _qc_library_metrics=_qc_library_metrics,
+            _qc_report=_qc_report,
+            _qc_sample_metrics=_qc_sample_metrics,
+            _metrics=sample_dir / METRICS_SUMMARY_FILENAMES[cellranger_directory.name],
+            _web_summary=sample_dir / "web_summary.html",
         )
         for sample_dir in per_sample_outs.iterdir()
         if sample_dir.is_dir()
@@ -63,18 +105,22 @@ def _get_files_from_cellranger_directory(
     dataset_directory: Path,
 ) -> CellrangerOutputFiles:
     cellranger_directory = _get_cellranger_directory(dataset_directory)
+
     return CellrangerOutputFiles(
-        metrics_file=cellranger_directory
+        _qc_library_metrics=cellranger_directory / "qc_library_metrics.csv",
+        _qc_report=cellranger_directory / "qc_report.csv",
+        _qc_sample_metrics=cellranger_directory / "qc_sample_metrics.csv",
+        _metrics=cellranger_directory
         / METRICS_SUMMARY_FILENAMES[cellranger_directory.name],
-        web_summary_file=cellranger_directory / "web_summary.html",
+        _web_summary=cellranger_directory / "web_summary.html",
     )
 
 
 def get_cellranger_output_files(
     dataset_directory: Path,
 ) -> Generator[CellrangerOutputFiles]:
-    if metrics_files := _get_files_from_per_sample_outs(dataset_directory):
-        return metrics_files
+    if files := _get_files_from_per_sample_outs(dataset_directory):
+        return files
 
     return (p for p in [_get_files_from_cellranger_directory(dataset_directory)])
 
@@ -107,11 +153,13 @@ def _copy_dataset_directory(source_dataset_directory: Path, destination: Path):
         return
 
     destination_directory = destination / source_cellranger_directory.parent.name
-    print(destination_directory)
+
     if destination_directory.exists():
         return
 
-    destination_files_directory = destination_directory / "_files"
+    destination_files_directory = (
+        destination_directory / source_cellranger_directory.name / "_files"
+    )
     destination_files_directory.mkdir(exist_ok=True, parents=True)
     shutil.copyfile(
         get_cmdline_file(source_dataset_directory),
@@ -124,21 +172,25 @@ def _copy_dataset_directory(source_dataset_directory: Path, destination: Path):
     )
 
     for output_file_set in get_cellranger_output_files(source_dataset_directory):
-        metrics_file_destination = _destination_file_path(
-            source_dataset_directory=source_dataset_directory,
-            source_file=output_file_set.metrics_file,
-            destination_directory=destination_directory,
-        )
-        metrics_file_destination.parent.mkdir(exist_ok=True, parents=True)
-        shutil.copyfile(output_file_set.metrics_file, metrics_file_destination)
+        for source_file in [
+            output_file_set._metrics,
+            output_file_set._qc_library_metrics,
+            output_file_set._qc_report,
+            output_file_set._qc_sample_metrics,
+            output_file_set._web_summary,
+        ]:
+            print(source_file.absolute())
+            if not source_file.exists():
+                continue
 
-        web_summary_destination = _destination_file_path(
-            source_dataset_directory=source_dataset_directory,
-            source_file=output_file_set.web_summary_file,
-            destination_directory=destination_directory,
-        )
-        web_summary_destination.parent.mkdir(exist_ok=True, parents=True)
-        shutil.copyfile(output_file_set.web_summary_file, web_summary_destination)
+            destination_file = _destination_file_path(
+                source_dataset_directory=source_dataset_directory,
+                source_file=source_file,
+                destination_directory=destination_directory,
+            )
+
+            destination_file.parent.mkdir(exist_ok=True, parents=True)
+            shutil.copyfile(source_file, destination_file)
 
 
 def main():
