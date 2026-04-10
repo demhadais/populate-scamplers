@@ -1,4 +1,5 @@
 import asyncio
+import json
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
@@ -32,9 +33,12 @@ POPULATE_CELLNOOR = "populate-cellnoor"
 
 
 async def _post_many(
-    client: aiohttp.ClientSession, url: list[str] | str, data: Iterable[dict[str, Any]]
+    client: aiohttp.ClientSession,
+    url: list[str] | str,
+    data: Iterable[dict[str, Any]],
+    ahmed_id: str,
 ) -> list[tuple[dict[str, Any], aiohttp.ClientResponse]]:
-    stripped_string_data = (strip_str_values(d) for d in data)
+    stripped_string_data = (strip_str_values(d, ahmed_id) for d in data)
     responses: list[tuple[dict[str, Any], asyncio.Task[aiohttp.ClientResponse]]] = []
     async with asyncio.TaskGroup() as tg:
         if isinstance(url, str):
@@ -87,11 +91,7 @@ async def _update_cellnoor_api(settings: "Settings"):
             empty_fn=settings.institutions.empty_fn,
         )
 
-        responses = await _post_many(
-            client,
-            institution_url,
-            new_institutions,
-        )
+        responses = await _post_many(client, institution_url, new_institutions, "")
         await _write_errors(responses, errors_dir)
 
     people_url = f"{settings.api_base_url}/people"
@@ -105,7 +105,7 @@ async def _update_cellnoor_api(settings: "Settings"):
             id_key=settings.people.id_key,
             empty_fn=settings.people.empty_fn,
         )
-        responses = await _post_many(client, people_url, new_people)
+        responses = await _post_many(client, people_url, new_people, "")
         await _write_errors(
             responses,
             errors_dir,
@@ -115,6 +115,13 @@ async def _update_cellnoor_api(settings: "Settings"):
                 else "unknown-email"
             ),
         )
+
+    async with client.get(
+        f"{settings.api_base_url}/people",
+        params={"q": json.dumps({"filter": {"emails": ["ahmed.said@jax.org"]}})},
+    ) as response:
+        data = await response.json()
+        ahmed_id = data[0]["id"]
 
     project_url = f"{settings.api_base_url}/projects"
     if labs := settings.projects:
@@ -126,7 +133,7 @@ async def _update_cellnoor_api(settings: "Settings"):
             id_key=settings.projects.id_key,
             empty_fn=settings.projects.empty_fn,
         )
-        responses = await _post_many(client, project_url, new_projects)
+        responses = await _post_many(client, project_url, new_projects, ahmed_id)
         await _write_errors(
             responses, errors_dir, lambda project: project["name"].replace(" ", "")
         )
@@ -143,7 +150,9 @@ async def _update_cellnoor_api(settings: "Settings"):
             id_key=settings.specimens.id_key,
             empty_fn=settings.specimens.empty_fn,
         )
-        request_response_pairs = await _post_many(client, specimen_url, new_specimens)
+        request_response_pairs = await _post_many(
+            client, specimen_url, new_specimens, ahmed_id
+        )
 
         await _write_errors(request_response_pairs, errors_dir)
 
@@ -169,7 +178,7 @@ async def _update_cellnoor_api(settings: "Settings"):
         ]
         data = [measurement for _, measurement in new_specimen_measurements]
 
-        request_response_pairs = await _post_many(client, urls, data)
+        request_response_pairs = await _post_many(client, urls, data, ahmed_id)
         await _write_errors(
             request_response_pairs,
             errors_dir,
@@ -191,7 +200,7 @@ async def _update_cellnoor_api(settings: "Settings"):
             empty_fn=suspensions.empty_fn,
         )
         request_response_pairs = await _post_many(
-            client, f"{suspensions_url}", new_suspensions
+            client, f"{suspensions_url}", new_suspensions, ahmed_id
         )
         await _write_errors(request_response_pairs, errors_dir)
 
@@ -213,7 +222,7 @@ async def _update_cellnoor_api(settings: "Settings"):
             for measurement in measurement_set
         ]
 
-        request_response_pairs = await _post_many(client, urls, data)
+        request_response_pairs = await _post_many(client, urls, data, ahmed_id)
         await _write_errors(
             request_response_pairs,
             errors_dir,
@@ -239,7 +248,7 @@ async def _update_cellnoor_api(settings: "Settings"):
         )
 
         request_response_pairs = await _post_many(
-            client, suspension_pools_url, new_suspension_pools
+            client, suspension_pools_url, new_suspension_pools, ahmed_id
         )
         await _write_errors(
             request_response_pairs,
@@ -269,7 +278,7 @@ async def _update_cellnoor_api(settings: "Settings"):
         )
 
         request_response_pairs = await _post_many(
-            client, chromium_runs_url, new_chromium_runs
+            client, chromium_runs_url, new_chromium_runs, ahmed_id
         )
         await _write_errors(request_response_pairs, settings.errors_dir)
 
@@ -286,11 +295,7 @@ async def _update_cellnoor_api(settings: "Settings"):
             empty_fn=settings.cdna.empty_fn,
         )
 
-        request_response_pairs = await _post_many(
-            client,
-            cdna_url,
-            new_cdna,
-        )
+        request_response_pairs = await _post_many(client, cdna_url, new_cdna, ahmed_id)
         await _write_errors(request_response_pairs, settings.errors_dir)
 
     libraries_url = f"{settings.api_base_url}/libraries"
@@ -307,9 +312,7 @@ async def _update_cellnoor_api(settings: "Settings"):
         )
 
         request_response_pairs = await _post_many(
-            client,
-            libraries_url,
-            new_libraries,
+            client, libraries_url, new_libraries, ahmed_id
         )
         await _write_errors(request_response_pairs, settings.errors_dir)
 

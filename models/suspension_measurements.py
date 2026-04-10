@@ -114,7 +114,7 @@ def _extract_measurements_from_row(
     ) + timedelta(days=1)
 
     measured_by_for_customer_measurement = parent_specimen["submitted_by"]
-    measured_by_for_scbl_measurement = people[row["preparer_1_email"]]
+    measured_by_for_scbl_measurement = people.get(row["preparer_1_email"])
 
     concentrations = [
         (

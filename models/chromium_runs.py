@@ -93,23 +93,36 @@ def _gems_loading_succeeded(loadings: list[dict[str, Any]]):
     return succeeded
 
 
-def _plexy(
-    gem_pools: list[dict[str, Any]],
+def _gem_pool_plexy(
+    gem_pool: dict[str, Any],
 ) -> Literal["standard", "on_chip_multiplexing"] | None:
-    loading = gem_pools[0]["loading"]
+    loading = gem_pool["loading"]
 
     if isinstance(loading, dict) and (
         loading.get("suspension_pool_id") or loading.get("suspension_id")
     ):
         return "standard"
 
-    if isinstance(loading, list) and loading[0].get(
-        "suspension_id", loading[0].get("suspension_pool_id")
-    ):
-        return "on_chip_multiplexing"
+    if isinstance(loading, list):
+        if loading[0].get("ocm_barcode_id"):
+            return "on_chip_multiplexing"
+        return "standard"
 
-    else:
+    return None
+
+
+def _plexy(
+    gem_pools: list[dict[str, Any]],
+) -> Literal["mixed", "standard", "on_chip_multiplexing"] | None:
+    plexies = (_gem_pool_plexy(gem_pool) for gem_pool in gem_pools)
+    plexies = {plexy for plexy in plexies if plexy}
+
+    if len(plexies) == 0:
         return None
+    if len(plexies) == 1:
+        return plexies.pop()  # pyright: ignore
+    else:
+        return "mixed"
 
 
 def _parse_chromium_run(
@@ -128,7 +141,7 @@ def _parse_chromium_run(
     if run_at := run_at:
         data["run_at"] = date_str_to_eastcoast_9am(run_at)
 
-    data["run_by"] = people.get(chromium_run[0]["chip_run_by"], str(uuid.uuid7()))
+    data["run_by"] = people.get(chromium_run[0]["chip_run_by"])
     data["assay_id"] = assays[chromium_run[0]["assay"]]
     data["succeeded"] = True
 

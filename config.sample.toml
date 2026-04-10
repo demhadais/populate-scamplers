@@ -24,11 +24,25 @@ sample_multiplexing = "flex_barcode"
 chemistry_version = "v1 - GEM-X"
 chromium_chip = "GEM-X FX"
 
+[assay_map."Multiplex Flex Gene Expression v2 (GEM-X)"]
+name = "Flex Gene Expression"
+library_types = [ "gene_expression" ]
+sample_multiplexing = "flex_oligonucleotide_barcode"
+chemistry_version = "v2 - GEM-X"
+chromium_chip = "GEM-X FX"
+
 [assay_map."Singleplex Flex Gene Expression v1 (GEM-X)"]
 name = "Flex Gene Expression"
 library_types = [ "gene_expression" ]
 sample_multiplexing = "singleplex"
 chemistry_version = "v1 - GEM-X"
+chromium_chip = "GEM-X FX"
+
+[assay_map."Singleplex Flex Gene Expression v2 (GEM-X)"]
+name = "Flex Gene Expression"
+library_types = [ "gene_expression" ]
+sample_multiplexing = "singleplex"
+chemistry_version = "v2 - GEM-X"
 chromium_chip = "GEM-X FX"
 
 [assay_map."Multiplex Flex Gene Expression v1 (Next GEM)"]
@@ -112,11 +126,12 @@ empty_fn = "lambda row: row['name'] == ' '"
 [projects]
 path = ""
 
+# Because we are wholly unable to enter data correctly, there are a number of records that we just wholesale ignore because they don't make it through to being Chromium datasets, and it's too much effort to actually correct them :)
+
 [specimens]
 path = ""
 field_renaming = { "Specimen Name" = "name", "ID" = "readable_id", "Experimental Condition (user-defined)" = "condition", "Sample Submitting Lab" = "lab_name", "Returned By" = "returner_email" }
-# We exclude the following rows because they are unknown sample types and don't make it through to being assayed
-empty_fn = "lambda row: row['readable_id'] in ['25SP1149', '25SP1663', '25SP1664', '25SP1665', '25SP1666', '25SP1667', '25SP1668', '25SP1669', '25SP1670', '25SP1671', '25SP1672', '25SP1673', '25SP1674', '25SP1675', '25SP1676', '25SP1677', '25SP1678', '25SP1679', '25SP1680', '25SP1681', '25SP1682', '25SP1683', '25SP1684', '25SP1782', '25SP1783', '25SP1784', '25SP1785', '25SP1786', '25SP1787', '25SP1788', '25SP1789', '25SP1790', '25SP1791', '25SP1792', '25SP1793']"
+empty_fn = "lambda row: row['readable_id'] in {'25SP116', '25SP117', '25SP1663', '25SP1664', '25SP1665', '25SP1666', '25SP1667', '25SP1668', '25SP1669', '25SP1670', '25SP1671', '25SP1672', '25SP1673', '25SP1674', '25SP1675', '25SP1676', '25SP1677', '25SP1678', '25SP1679', '25SP1680', '25SP1681', '25SP1682', '25SP1683', '25SP1684', '25SP1782', '25SP1783', '25SP1784', '25SP1785', '25SP1786', '25SP1787', '25SP1788', '25SP1789', '25SP1790', '25SP1791', '25SP1792', '25SP1793'}"
 
 [specimen_measurements]
 path = ""
@@ -137,6 +152,7 @@ field_renaming = { "Multiplexed Suspension (Pool) ID" = "readable_id", "Multiple
 [gems]
 path = ""
 field_renaming = { "GEMs ID" = "readable_id", "Chromium Run ID" = "chromium_run_readable_id" }
+empty_fn = "lambda row: row['readable_id'] in {'G0072', 'G0073'}"
 
 [gems_suspensions]
 path = ""
@@ -145,12 +161,12 @@ field_renaming = { "Suspension ID" = "suspension_readable_id", "Multiplexed Susp
 [cdna]
 path = ""
 field_renaming = {"cDNA/Pre-amplification Product ID" = "readable_id", "GEMs ID" = "gems_readable_id", "Library Type to be Built" = "library_type", "Number of Amplification Cycles" = "n_amplification_cycles", "Is Pre-amp Product" = "is_preamplification_product", "Fails QC" = "fails_quality_control", "General Notes" = "notes"}
-# Ignore these because they fail but it doesn't matter because they don't make it through to library + sequencing
-empty_fn = "lambda row: row['readable_id'] in ['25E103-C3', '25E103-C4']"
+empty_fn = "lambda row: row['readable_id'] in {'25E28-C1', '25E28-C2', '25E103-C3', '25E103-C4'}"
 
 [libraries]
 path = ""
 field_renaming = {"Pre-amplified/cDNA ID" = "cdna_readable_id", "Library ID" = "readable_id", "Number of SI PCR Cycles" = "number_of_sample_index_pcr_cycles", "Library Volume (µl)" = "volume_µl", "Fails QC" = "fails_quality_control", "General Notes" = "notes" }
+empty_fn = "lambda row: row['readable_id'] in {'25E28-L1', '25E28-L2'}"
 
 [sequencing_submissions]
 path = ""

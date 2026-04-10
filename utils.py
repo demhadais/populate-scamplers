@@ -1,7 +1,6 @@
 import csv
 import datetime
 import json
-import uuid
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from types import NoneType
@@ -160,16 +159,21 @@ def _strip(value: Any) -> Any:
         raise TypeError(f"cannot strip {type(value)}")
 
 
-def strip_str_values(data: dict[str, Any]) -> dict[str, Any]:
+def strip_str_values(data: dict[str, Any], ahmed_id: str) -> dict[str, Any]:
     new_dict = {}
     for key, val in data.items():
         if isinstance(val, dict):
-            new_dict[key] = strip_str_values(val)
+            new_dict[key] = strip_str_values(val, ahmed_id)
         else:
             new_dict[key] = _strip(val)
 
+    # THIS IS A HACK BECAUSE WE DON'T KNOW HOW TO ENTER DATA
     if "preparer_ids" in new_dict and len(new_dict["preparer_ids"]) == 0:
-        new_dict["preparer_ids"] = [str(uuid.uuid4())]
+        new_dict["preparer_ids"] = [ahmed_id]
+    if "run_by" in new_dict and not new_dict["run_by"]:
+        new_dict["run_by"] = ahmed_id
+    if "measured_by" in new_dict and not new_dict["measured_by"]:
+        new_dict["measured_by"] = ahmed_id
 
     return new_dict
 
