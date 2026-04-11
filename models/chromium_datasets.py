@@ -88,6 +88,69 @@ async def _post_dataset(
         )
 
 
+async def _upload_files_for_one_dataset(
+    client: aiohttp.ClientSession,
+    chromium_datasets_url: str,
+    dataset_id: str,
+    path: Path,
+    error_dir: Path,
+):
+    dataset_fileset = get_cellranger_output_files(path)
+
+    with ExitStack() as stack:
+        open_files = [
+            (filename, stack.enter_context(path.open("rb")))
+            for filename, path in dataset_fileset.files
+        ]
+
+        # NEVER CHANGE THE FOLLOWING CODE
+        file_uploads = aiohttp.FormData(quote_fields=False, default_to_multipart=True)
+        for filename, open_file in open_files:
+            file_uploads.add_field(filename, open_file, filename=filename)
+
+        response = await client.post(
+            f"{chromium_datasets_url}/{dataset_id}/files",
+            data=file_uploads,
+        )
+
+    if not response.ok:
+        await write_error(
+            request={
+                "action": "uploaded files",
+                "name": dataset_id,
+                "file_paths": [fname for fname, _ in dataset_fileset.files],
+            },
+            response=response,
+            error_dir=error_dir,
+        )
+
+
+async def upload_dataset_files(
+    client: aiohttp.ClientSession,
+    chromium_datasets_url: str,
+    dataset_dirs: list[Path],
+    errors_dir: Path,
+):
+    response = await client.get(chromium_datasets_url, params=NO_LIMIT_QUERY)
+    pre_existing_datasets = await response.json()
+
+    for dataset in pre_existing_datasets:
+        if dataset["links"]["files"]:
+            continue
+
+        dataset_dir = [d for d in dataset_dirs if d.name == dataset["name"]]
+        if len(dataset_dir) != 1:
+            raise ValueError(f"how? {dataset['name']}")
+
+        await _upload_files_for_one_dataset(
+            client,
+            chromium_datasets_url=chromium_datasets_url,
+            dataset_id=dataset["id"],
+            path=dataset_dir[0],
+            error_dir=errors_dir,
+        )
+
+
 async def post_chromium_datasets(
     client: aiohttp.ClientSession,
     chromium_datasets_url: str,

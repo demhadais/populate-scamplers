@@ -14,7 +14,7 @@ from pydantic_settings import (
 )
 
 from models.cdna import csv_to_new_cdna
-from models.chromium_datasets import post_chromium_datasets
+from models.chromium_datasets import upload_dataset_files
 from models.chromium_runs import csv_to_chromium_runs
 from models.institutions import (
     csv_to_new_institutions,
@@ -330,13 +330,17 @@ async def _update_cellnoor_api(settings: "Settings"):
 
     chromium_datasets_url = f"{settings.api_base_url}/chromium-datasets"
     if dataset_dirs := settings.dataset_dirs:
-        await post_chromium_datasets(
-            client,
-            chromium_datasets_url,
-            libraries_url,
-            dataset_dirs,
-            settings.errors_dir,
+        await upload_dataset_files(
+            client, chromium_datasets_url, dataset_dirs, errors_dir
         )
+
+        # await post_chromium_datasets(
+        #     client,
+        #     chromium_datasets_url,
+        #     libraries_url,
+        #     dataset_dirs,
+        #     settings.errors_dir,
+        # )
 
     await client.close()
 

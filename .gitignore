@@ -11,3 +11,5 @@ wheels/
 
 # Errors generated during testing
 .errors*
+
+staff.json
