@@ -146,6 +146,8 @@ def _parse_row(
             data["type"] = "suspension"
             data["preservation_state"] = "fixed"
             data["fixative"] = SUSPENSION_FIXATIVES.get(preservation)
+        case ("RNA Extract", _):
+            data["type"] = "rna_extract"
         case (ty, preservation_method):
             data["type"] = ty
             data["preservation_state"] = preservation_method

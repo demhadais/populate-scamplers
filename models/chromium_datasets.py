@@ -1,6 +1,5 @@
 import asyncio
 import json
-import os
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -61,13 +60,8 @@ async def _post_dataset(
 
 _CONTENT_TYPES = {"html": "text/html", "json": "application/json", "csv": "text/csv"}
 
-_CPU_COUNT = os.cpu_count()
-if _CPU_COUNT is None:
-    _CPU_COUNT = 1
-
 _ZSTD_OPTIONS = {
     CompressionParameter.compression_level: 22,
-    CompressionParameter.nb_workers: _CPU_COUNT,
 }
 
 
@@ -84,7 +78,7 @@ async def _upload_files_for_one_dataset(
         return [
             (
                 filename,
-                zstd.compress(path.read_bytes(), options=_ZSTD_OPTIONS),
+                zstd.compress(path.read_bytes(), options=_ZSTD_OPTIONS),  # pyright: ignore[reportArgumentType]
             )
             if filename.endswith(".html")
             else (filename, path.read_bytes())
@@ -103,7 +97,7 @@ async def _upload_files_for_one_dataset(
         )
 
     response = await client.post(
-        f"{chromium_datasets_url}/{dataset_id}/files",
+        f"{chromium_datasets_url}/{dataset_id}/raw-files",
         data=file_uploads,
         headers={"Content-Encoding": "zstd"},
     )
