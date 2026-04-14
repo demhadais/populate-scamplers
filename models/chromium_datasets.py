@@ -1,12 +1,14 @@
 import asyncio
 import json
+import os
 import re
-from contextlib import ExitStack
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import aiohttp
+from compression import zstd
+from compression.zstd import CompressionParameter
 
 from copy_chromium_datasets import (
     get_cellranger_output_files,
@@ -56,36 +58,17 @@ async def _post_dataset(
         await write_error(request=data, response=response, error_dir=error_dir)
         return
 
-    created_dataset = await response.json()
 
-    dataset_fileset = get_cellranger_output_files(path)
+_CONTENT_TYPES = {"html": "text/html", "json": "application/json", "csv": "text/csv"}
 
-    with ExitStack() as stack:
-        open_files = [
-            (filename, stack.enter_context(path.open("rb")))
-            for filename, path in dataset_fileset.files
-        ]
+_CPU_COUNT = os.cpu_count()
+if _CPU_COUNT is None:
+    _CPU_COUNT = 1
 
-        # NEVER CHANGE THE FOLLOWING CODE
-        file_uploads = aiohttp.FormData(quote_fields=False, default_to_multipart=True)
-        for filename, open_file in open_files:
-            file_uploads.add_field(filename, open_file, filename=filename)
-
-        response = await client.post(
-            f"{chromium_datasets_url}/{created_dataset['id']}/files",
-            data=file_uploads,
-        )
-
-    if not response.ok:
-        await write_error(
-            request={
-                "action": "uploaded files",
-                "name": created_dataset["name"],
-                "file_paths": [fname for fname, _ in dataset_fileset.files],
-            },
-            response=response,
-            error_dir=error_dir,
-        )
+_ZSTD_OPTIONS = {
+    CompressionParameter.compression_level: 22,
+    CompressionParameter.nb_workers: _CPU_COUNT,
+}
 
 
 async def _upload_files_for_one_dataset(
@@ -97,21 +80,33 @@ async def _upload_files_for_one_dataset(
 ):
     dataset_fileset = get_cellranger_output_files(path)
 
-    with ExitStack() as stack:
-        open_files = [
-            (filename, stack.enter_context(path.open("rb")))
+    def _read_and_compress():
+        return [
+            (
+                filename,
+                zstd.compress(path.read_bytes(), options=_ZSTD_OPTIONS),
+            )
+            if filename.endswith(".html")
+            else (filename, path.read_bytes())
             for filename, path in dataset_fileset.files
         ]
 
-        # NEVER CHANGE THE FOLLOWING CODE
-        file_uploads = aiohttp.FormData(quote_fields=False, default_to_multipart=True)
-        for filename, open_file in open_files:
-            file_uploads.add_field(filename, open_file, filename=filename)
-
-        response = await client.post(
-            f"{chromium_datasets_url}/{dataset_id}/files",
-            data=file_uploads,
+    files = await asyncio.to_thread(_read_and_compress)
+    # NEVER CHANGE THE FOLLOWING CODE. Trying to do this using aiohttp's other facilities doesn't work :)
+    file_uploads = aiohttp.FormData(quote_fields=False, default_to_multipart=True)
+    for filename, file_content in files:
+        file_uploads.add_field(
+            filename,
+            file_content,
+            content_type=_CONTENT_TYPES[filename.split(".")[-1]],
+            filename=filename,
         )
+
+    response = await client.post(
+        f"{chromium_datasets_url}/{dataset_id}/files",
+        data=file_uploads,
+        headers={"Content-Encoding": "zstd"},
+    )
 
     if not response.ok:
         await write_error(
@@ -133,22 +128,23 @@ async def upload_dataset_files(
 ):
     response = await client.get(chromium_datasets_url, params=NO_LIMIT_QUERY)
     pre_existing_datasets = await response.json()
+    dataset_dir_map = {d.name: d for d in dataset_dirs}
 
-    for dataset in pre_existing_datasets:
-        if dataset["links"]["files"]:
-            continue
+    tasks = []
+    async with asyncio.TaskGroup() as tg:
+        for dataset in pre_existing_datasets:
+            dataset_dir = dataset_dir_map[dataset["name"]]
 
-        dataset_dir = [d for d in dataset_dirs if d.name == dataset["name"]]
-        if len(dataset_dir) != 1:
-            raise ValueError(f"how? {dataset['name']}")
-
-        await _upload_files_for_one_dataset(
-            client,
-            chromium_datasets_url=chromium_datasets_url,
-            dataset_id=dataset["id"],
-            path=dataset_dir[0],
-            error_dir=errors_dir,
-        )
+            task = tg.create_task(
+                _upload_files_for_one_dataset(
+                    client,
+                    chromium_datasets_url=chromium_datasets_url,
+                    dataset_id=dataset["id"],
+                    path=dataset_dir,
+                    error_dir=errors_dir,
+                )
+            )
+            tasks.append(task)
 
 
 async def post_chromium_datasets(
@@ -170,14 +166,6 @@ async def post_chromium_datasets(
     pre_existing_datasets = await pre_existing_datasets.result().json()
     pre_existing_datasets = property_id_map("name", pre_existing_datasets)
 
-    # Let's do it the inefficient way! Woohoo!
-    # for path in dataset_dirs:
-    #     if path.name in pre_existing_datasets:
-    #         continue
-    #     await _post_dataset(client, chromium_datasets_url, path, libraries, errors_dir)
-
-    # I hate, loathe, and detest this language. The following code, which is what async is meant to do, doesn't work.
-
     tasks = []
     async with asyncio.TaskGroup() as tg:
         for path in dataset_dirs:
@@ -190,6 +178,3 @@ async def post_chromium_datasets(
                 )
             )
             tasks.append(task)
-
-    for task in tasks:
-        task.result()
