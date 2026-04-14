@@ -1,4 +1,5 @@
 import asyncio
+import itertools
 import json
 import re
 from datetime import UTC, datetime
@@ -124,21 +125,27 @@ async def upload_dataset_files(
     pre_existing_datasets = await response.json()
     dataset_dir_map = {d.name: d for d in dataset_dirs}
 
-    tasks = []
-    async with asyncio.TaskGroup() as tg:
-        for dataset in pre_existing_datasets:
-            dataset_dir = dataset_dir_map[dataset["name"]]
+    # 5 seems like a good number? Could play with it more
+    for dataset_batch in itertools.batched(pre_existing_datasets, 5):
+        tasks = []
+        async with asyncio.TaskGroup() as tg:
+            for dataset in dataset_batch:
+                # We can just skip datasets with files
+                if dataset["links"]["raw_files"]:
+                    continue
 
-            task = tg.create_task(
-                _upload_files_for_one_dataset(
-                    client,
-                    chromium_datasets_url=chromium_datasets_url,
-                    dataset_id=dataset["id"],
-                    path=dataset_dir,
-                    error_dir=errors_dir,
+                dataset_dir = dataset_dir_map[dataset["name"]]
+
+                task = tg.create_task(
+                    _upload_files_for_one_dataset(
+                        client,
+                        chromium_datasets_url=chromium_datasets_url,
+                        dataset_id=dataset["id"],
+                        path=dataset_dir,
+                        error_dir=errors_dir,
+                    )
                 )
-            )
-            tasks.append(task)
+                tasks.append(task)
 
 
 async def post_chromium_datasets(
