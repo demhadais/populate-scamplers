@@ -17,6 +17,8 @@ from copy_chromium_datasets import (
 )
 from utils import NO_LIMIT_QUERY, property_id_map, write_error
 
+# TODO: this module could easily be made more performant with a clever redesign. If we created some kind of queue where files were compressed in one thread and handed off to another for sending when a batch is complete, then we can separate out the work. Maybe
+
 
 def _get_delivered_at(dataset_directory: Path) -> str:
     pipeline_metadata = get_pipeline_metadata_file(dataset_directory).read_bytes()
@@ -63,6 +65,8 @@ _CONTENT_TYPES = {"html": "text/html", "json": "application/json", "csv": "text/
 
 _ZSTD_OPTIONS = {
     CompressionParameter.compression_level: 22,
+    # 2^22 = roughly 4MB. Browsers seem to hate anything over 8 MB for the window size, so we'll just do a power-of-two less than that :)
+    CompressionParameter.window_log: 22,
 }
 
 
@@ -125,8 +129,8 @@ async def upload_dataset_files(
     pre_existing_datasets = await response.json()
     dataset_dir_map = {d.name: d for d in dataset_dirs}
 
-    # 5 seems like a good number? Could play with it more
-    for dataset_batch in itertools.batched(pre_existing_datasets, 5):
+    # The server can really only handle 4 at a time (I wrote the server)
+    for dataset_batch in itertools.batched(pre_existing_datasets, 4):
         tasks = []
         async with asyncio.TaskGroup() as tg:
             for dataset in dataset_batch:
